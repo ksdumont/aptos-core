@@ -156,6 +156,15 @@ pub enum EntryPoints {
     },
     /// Increment destination resource - COUNTER_STEP
     StepDst,
+    ResourceGroupsGlobalResource {
+        string_length: usize,
+    },
+    ResourceGroupsIndividualResource {
+        string_length: usize,
+    },
+    ResourceGroupsMultiChange {
+        string_length: usize,
+    },
 
     /// Initialize Token V1 NFT collection
     TokenV1InitializeCollection,
@@ -211,7 +220,10 @@ impl EntryPoints {
             | EntryPoints::TokenV1MintAndTransferNFTParallel
             | EntryPoints::TokenV1MintAndTransferNFTSequential
             | EntryPoints::TokenV1MintAndStoreFT
-            | EntryPoints::TokenV1MintAndTransferFT => "framework_usecases",
+            | EntryPoints::TokenV1MintAndTransferFT
+            | EntryPoints::ResourceGroupsGlobalResource { .. }
+            | EntryPoints::ResourceGroupsIndividualResource { .. }
+            | EntryPoints::ResourceGroupsMultiChange { .. } => "framework_usecases",
             EntryPoints::TokenV2AmbassadorMint => "ambassador_token",
             EntryPoints::InitializeVectorPicture { .. }
             | EntryPoints::VectorPicture { .. }
@@ -249,6 +261,9 @@ impl EntryPoints {
             | EntryPoints::TokenV1MintAndTransferNFTSequential
             | EntryPoints::TokenV1MintAndStoreFT
             | EntryPoints::TokenV1MintAndTransferFT => "token_v1",
+            EntryPoints::ResourceGroupsGlobalResource { .. }
+            | EntryPoints::ResourceGroupsIndividualResource { .. }
+            | EntryPoints::ResourceGroupsMultiChange { .. } => "resource_groups_example",
             EntryPoints::TokenV2AmbassadorMint => "ambassador",
             EntryPoints::InitializeVectorPicture { .. } | EntryPoints::VectorPicture { .. } => {
                 "vector_picture"
@@ -383,6 +398,40 @@ impl EntryPoints {
                 ident_str!("token_v1_mint_and_transfer_ft").to_owned(),
                 vec![bcs::to_bytes(other.expect("Must provide other")).unwrap()],
             ),
+            EntryPoints::ResourceGroupsGlobalResource { string_length }
+            | EntryPoints::ResourceGroupsIndividualResource { string_length } => {
+                let rng: &mut StdRng = rng.expect("Must provide RNG");
+                let index: u64 = rng.gen_range(0, 8);
+                get_payload(
+                    module_id,
+                    ident_str!(
+                        if let EntryPoints::ResourceGroupsGlobalResource { .. } = self {
+                            "set_p"
+                        } else {
+                            "set"
+                        }
+                    )
+                    .to_owned(),
+                    vec![
+                        bcs::to_bytes(&index).unwrap(),
+                        bcs::to_bytes(&rand_string(rng, *string_length)).unwrap(), // name
+                    ],
+                )
+            },
+            EntryPoints::ResourceGroupsMultiChange { string_length } => {
+                let rng: &mut StdRng = rng.expect("Must provide RNG");
+                let index1: u64 = rng.gen_range(0, 8);
+                let index2: u64 = rng.gen_range(0, 8);
+                let index3: u64 = rng.gen_range(0, 8);
+                let index4: u64 = rng.gen_range(0, 8);
+                get_payload(module_id, ident_str!("set_4").to_owned(), vec![
+                    bcs::to_bytes(&index1).unwrap(),
+                    bcs::to_bytes(&index2).unwrap(),
+                    bcs::to_bytes(&index3).unwrap(),
+                    bcs::to_bytes(&index4).unwrap(),
+                    bcs::to_bytes(&rand_string(rng, *string_length)).unwrap(), // name
+                ])
+            },
             EntryPoints::TokenV2AmbassadorMint => {
                 let rng: &mut StdRng = rng.expect("Must provide RNG");
                 get_payload(
@@ -459,6 +508,7 @@ impl EntryPoints {
         match self {
             EntryPoints::Nop2Signers => MultiSigConfig::Random(1),
             EntryPoints::Nop5Signers => MultiSigConfig::Random(4),
+            EntryPoints::ResourceGroupsGlobalResource { .. } => MultiSigConfig::Publisher,
             EntryPoints::TokenV2AmbassadorMint => MultiSigConfig::Publisher,
             _ => MultiSigConfig::None,
         }

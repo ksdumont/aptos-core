@@ -23,6 +23,9 @@ pub enum TransactionTypeArg {
     AccountResource10KB,
     ModifyGlobalResource,
     Batch100Transfer,
+    ResourceGroupsGlobalResource1KB,
+    ResourceGroupsIndividualResource1KB,
+    ResourceGroupsMultiChange1KB,
     TokenV1NFTMintAndStoreSequential,
     TokenV1NFTMintAndTransferSequential,
     TokenV1NFTMintAndStoreParallel,
@@ -118,6 +121,33 @@ impl TransactionTypeArg {
             },
             TransactionTypeArg::Batch100Transfer => {
                 TransactionType::BatchTransfer { batch_size: 100 }
+            },
+            TransactionTypeArg::ResourceGroupsGlobalResource1KB => {
+                TransactionType::CallCustomModules {
+                    entry_point: EntryPoints::ResourceGroupsGlobalResource {
+                        string_length: 1024,
+                    },
+                    num_modules: module_working_set_size,
+                    use_account_pool: sender_use_account_pool,
+                }
+            },
+            TransactionTypeArg::ResourceGroupsIndividualResource1KB => {
+                TransactionType::CallCustomModules {
+                    entry_point: EntryPoints::ResourceGroupsIndividualResource {
+                        string_length: 1024,
+                    },
+                    num_modules: module_working_set_size,
+                    use_account_pool: sender_use_account_pool,
+                }
+            },
+            TransactionTypeArg::ResourceGroupsMultiChange1KB => {
+                TransactionType::CallCustomModules {
+                    entry_point: EntryPoints::ResourceGroupsMultiChange {
+                        string_length: 1024,
+                    },
+                    num_modules: module_working_set_size,
+                    use_account_pool: sender_use_account_pool,
+                }
             },
             TransactionTypeArg::TokenV1NFTMintAndStoreSequential => {
                 TransactionType::CallCustomModules {
