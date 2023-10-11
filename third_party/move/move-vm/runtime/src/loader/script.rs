@@ -2,27 +2,19 @@
 // Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
-
+use super::{
+    intern_type, BinaryCache, Function, FunctionHandle, FunctionInstantiation, ModuleAdapter,
+    Scope, ScriptHash,
+};
 use move_binary_format::{
     access::ScriptAccess,
     binary_views::BinaryIndexedView,
     errors::{Location, PartialVMError, PartialVMResult, VMResult},
-    file_format::{
-        Bytecode, CompiledScript, FunctionDefinitionIndex, Signature, SignatureIndex,
-    },
+    file_format::{Bytecode, CompiledScript, FunctionDefinitionIndex, Signature, SignatureIndex},
 };
-
-use move_core_types::{
-    identifier::{Identifier},
-    language_storage::{ModuleId},
-    vm_status::StatusCode,
-};
+use move_core_types::{identifier::Identifier, language_storage::ModuleId, vm_status::StatusCode};
 use move_vm_types::loaded_data::runtime_types::{StructIdentifier, Type};
-use std::{
-    collections::{BTreeMap},
-    sync::Arc,
-};
-use super::{ModuleCache, ScriptHash, FunctionHandle, FunctionInstantiation, Function, Scope, intern_type, BinaryCache};
+use std::{collections::BTreeMap, sync::Arc};
 
 // A Script is very similar to a `CompiledScript` but data is "transformed" to a representation
 // more appropriate to execution.
@@ -56,7 +48,7 @@ impl Script {
     pub(crate) fn new(
         script: CompiledScript,
         script_hash: &ScriptHash,
-        cache: &ModuleCache,
+        cache: &ModuleAdapter,
     ) -> VMResult<Self> {
         let mut struct_names = vec![];
         for struct_handle in script.struct_handles() {
@@ -230,7 +222,6 @@ impl Script {
         self.single_signature_token_map.get(&idx).unwrap()
     }
 }
-
 
 // A script cache is a map from the hash value of a script and the `Script` itself.
 // Script are added in the cache once verified and so getting a script out the cache

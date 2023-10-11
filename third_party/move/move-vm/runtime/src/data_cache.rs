@@ -2,7 +2,7 @@
 // Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::loader::Loader;
+use crate::loader::{Loader, ModuleAdapter, ModuleStorage};
 use bytes::Bytes;
 use move_binary_format::errors::*;
 use move_core_types::{
@@ -20,7 +20,10 @@ use move_vm_types::{
     loaded_data::runtime_types::Type,
     values::{GlobalValue, Value},
 };
-use std::collections::btree_map::BTreeMap;
+use std::{
+    collections::{btree_map::BTreeMap, hash_map::HashMap},
+    sync::Arc,
+};
 
 pub struct AccountDataCache {
     // The bool flag in the `data_map` indicates whether the resource contains
@@ -53,15 +56,20 @@ impl AccountDataCache {
 /// and pass it to the Move VM.
 pub(crate) struct TransactionDataCache<'r> {
     remote: &'r dyn MoveResolver,
+    pub(crate) module_store: ModuleAdapter,
     account_map: BTreeMap<AccountAddress, AccountDataCache>,
 }
 
 impl<'r> TransactionDataCache<'r> {
     /// Create a `TransactionDataCache` with a `RemoteCache` that provides access to data
     /// not updated in the transaction.
-    pub(crate) fn new(remote: &'r dyn MoveResolver) -> Self {
+    pub(crate) fn new(
+        remote: &'r dyn MoveResolver,
+        module_storage: Arc<dyn ModuleStorage>,
+    ) -> Self {
         TransactionDataCache {
             remote,
+            module_store: ModuleAdapter::new(module_storage),
             account_map: BTreeMap::new(),
         }
     }
@@ -181,7 +189,7 @@ impl<'r> TransactionDataCache<'r> {
             let (ty_layout, has_aggregator_lifting) =
                 loader.type_to_type_layout_with_identifier_mappings(ty)?;
 
-            let module = loader.get_module(&ty_tag.module_id());
+            let module = self.module_store.module_at(&ty_tag.module_id());
             let metadata: &[Metadata] = match &module {
                 Some(module) => &module.module().metadata,
                 None => &[],

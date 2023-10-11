@@ -3,24 +3,23 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::{
-    config::VMConfig, data_cache::TransactionDataCache, logging::expect_no_verification_errors,
-    native_functions::NativeFunctions, session::LoadedFunctionInstantiation,
+    config::VMConfig, data_cache::TransactionDataCache, loader::modules::ModuleCache,
+    logging::expect_no_verification_errors, native_functions::NativeFunctions,
+    session::LoadedFunctionInstantiation,
 };
 use move_binary_format::{
     access::{ModuleAccess, ScriptAccess},
     errors::{verification_error, Location, PartialVMError, PartialVMResult, VMResult},
     file_format::{
-        AbilitySet, CompiledModule, CompiledScript, Constant, ConstantPoolIndex,
-        FieldHandleIndex, FieldInstantiationIndex, FunctionHandleIndex,
-        FunctionInstantiationIndex, SignatureIndex, StructDefInstantiationIndex,
-        StructDefinitionIndex, StructFieldInformation, TableIndex, TypeParameterIndex,
+        AbilitySet, CompiledModule, CompiledScript, Constant, ConstantPoolIndex, FieldHandleIndex,
+        FieldInstantiationIndex, FunctionHandleIndex, FunctionInstantiationIndex, SignatureIndex,
+        StructDefInstantiationIndex, StructDefinitionIndex, StructFieldInformation, TableIndex,
+        TypeParameterIndex,
     },
     IndexKind,
 };
 use move_bytecode_verifier::{self, cyclic_dependencies, dependencies};
 use move_core_types::{
-    account_address::AccountAddress,
-    ident_str,
     identifier::{IdentStr, Identifier},
     language_storage::{ModuleId, StructTag, TypeTag},
     value::{IdentifierMappingKind, LayoutTag, MoveFieldLayout, MoveStructLayout, MoveTypeLayout},
@@ -39,11 +38,11 @@ use std::{
 
 mod function;
 mod modules;
-mod type_loader;
 mod script;
+mod type_loader;
 
 pub(crate) use function::{Function, FunctionHandle, FunctionInstantiation, LoadedFunction, Scope};
-pub(crate) use modules::{Module, ModuleCache};
+pub(crate) use modules::{Module, ModuleAdapter, ModuleStorage};
 pub(crate) use script::{Script, ScriptCache};
 use type_loader::intern_type;
 
@@ -94,7 +93,7 @@ where
 // The `pub(crate)` API is what a Loader offers to the runtime.
 pub(crate) struct Loader {
     scripts: RwLock<ScriptCache>,
-    module_cache: RwLock<ModuleCache>,
+    pub(crate) module_cache: Arc<ModuleCache>,
     type_cache: RwLock<TypeCache>,
     natives: NativeFunctions,
 
@@ -137,7 +136,7 @@ impl Clone for Loader {
     fn clone(&self) -> Self {
         Self {
             scripts: RwLock::new(self.scripts.read().clone()),
-            module_cache: RwLock::new(self.module_cache.read().clone()),
+            module_cache: self.module_cache.clone(),
             type_cache: RwLock::new(self.type_cache.read().clone()),
             natives: self.natives.clone(),
             invalidated: RwLock::new(*self.invalidated.read()),
@@ -151,7 +150,7 @@ impl Loader {
     pub(crate) fn new(natives: NativeFunctions, vm_config: VMConfig) -> Self {
         Self {
             scripts: RwLock::new(ScriptCache::new()),
-            module_cache: RwLock::new(ModuleCache::new()),
+            module_cache: Arc::new(ModuleCache::new()),
             type_cache: RwLock::new(TypeCache::new()),
             natives,
             invalidated: RwLock::new(false),
@@ -169,7 +168,7 @@ impl Loader {
         let mut invalidated = self.invalidated.write();
         if *invalidated {
             *self.scripts.write() = ScriptCache::new();
-            *self.module_cache.write() = ModuleCache::new();
+            self.module_cache.flush();
             *self.type_cache.write() = TypeCache::new();
             *invalidated = false;
         }
@@ -213,7 +212,7 @@ impl Loader {
             Some(cached) => cached,
             None => {
                 let ver_script = self.deserialize_and_verify_script(script_blob, data_store)?;
-                let script = Script::new(ver_script, &hash_value, &self.module_cache.read())?;
+                let script = Script::new(ver_script, &hash_value, &data_store.module_store)?;
                 scripts.insert(hash_value, script)
             },
         };
@@ -315,9 +314,8 @@ impl Loader {
         data_store: &TransactionDataCache,
     ) -> VMResult<(Arc<Module>, Arc<Function>, Vec<Type>, Vec<Type>)> {
         let module = self.load_module(module_id, data_store)?;
-        let func = self
-            .module_cache
-            .read()
+        let func = data_store
+            .module_store
             .resolve_function_by_name(function_name, module_id)
             .map_err(|err| err.finish(Location::Undefined))?;
 
@@ -593,7 +591,7 @@ impl Loader {
         )?;
 
         // make sure there is no cyclic dependency
-        self.verify_module_cyclic_relations(module, bundle_verified, bundle_unverified)
+        self.verify_module_cyclic_relations(module, bundle_verified, bundle_unverified, data_store)
     }
 
     fn verify_module_cyclic_relations(
@@ -601,15 +599,21 @@ impl Loader {
         module: &CompiledModule,
         bundle_verified: &BTreeMap<ModuleId, CompiledModule>,
         bundle_unverified: &BTreeSet<ModuleId>,
+        data_store: &TransactionDataCache,
     ) -> VMResult<()> {
-        let module_cache = self.module_cache.read();
+        // let module_cache = self.module_cache.read();
         cyclic_dependencies::verify_module(
             module,
             |module_id| {
                 bundle_verified
                     .get(module_id)
-                    .or_else(|| module_cache.modules.get(module_id).map(|m| m.module()))
-                    .map(|m| m.immediate_dependencies())
+                    .map(|module| module.immediate_dependencies())
+                    .or_else(|| {
+                        data_store
+                            .module_store
+                            .module_at(module_id)
+                            .map(|m| m.module.immediate_dependencies())
+                    })
                     .ok_or_else(|| PartialVMError::new(StatusCode::MISSING_DEPENDENCY))
             },
             |module_id| {
@@ -623,8 +627,13 @@ impl Loader {
                     // creates a cyclic relation.
                     bundle_verified
                         .get(module_id)
-                        .or_else(|| module_cache.modules.get(module_id).map(|m| m.module()))
-                        .map(|m| m.immediate_friends())
+                        .map(|module| module.immediate_friends())
+                        .or_else(|| {
+                            data_store
+                                .module_store
+                                .module_at(module_id)
+                                .map(|m| m.module.immediate_friends())
+                        })
                         .ok_or_else(|| PartialVMError::new(StatusCode::MISSING_DEPENDENCY))
                 }
             },
@@ -672,9 +681,8 @@ impl Loader {
             TypeTag::Struct(struct_tag) => {
                 let module_id = ModuleId::new(struct_tag.address, struct_tag.module.clone());
                 self.load_module(&module_id, data_store)?;
-                let struct_type = self
-                    .module_cache
-                    .read()
+                let struct_type = data_store
+                    .module_store
                     // GOOD module was loaded above
                     .resolve_struct_by_name(&struct_tag.name, &module_id)
                     .map_err(|e| e.finish(Location::Undefined))?;
@@ -721,7 +729,7 @@ impl Loader {
         data_store: &TransactionDataCache,
     ) -> VMResult<Arc<Module>> {
         // if the module is already in the code cache, load the cached version
-        if let Some(cached) = self.module_cache.read().module_at(id) {
+        if let Some(cached) = data_store.module_store.module_at(id) {
             self.module_cache_hits.write().insert(id.clone());
             return Ok(cached);
         }
@@ -741,6 +749,7 @@ impl Loader {
             module_ref.module(),
             &BTreeMap::new(),
             &BTreeSet::new(),
+            data_store,
         )
         .map_err(expect_no_verification_errors)?;
         Ok(module_ref)
@@ -828,9 +837,9 @@ impl Loader {
         )?;
 
         // if linking goes well, insert the module to the code cache
-        let mut locked_cache = self.module_cache.write();
-        let module_ref = locked_cache.insert(&self.natives, id.clone(), module)?;
-        drop(locked_cache); // explicit unlock
+        let module_ref = data_store
+            .module_store
+            .insert(&self.natives, id.clone(), module)?;
 
         Ok(module_ref)
     }
@@ -864,20 +873,16 @@ impl Loader {
             if let Some(cached) = bundle_verified.get(&module_id) {
                 bundle_deps.push(cached);
             } else {
-                let locked_cache = self.module_cache.read();
-                let loaded = match locked_cache.module_at(&module_id) {
-                    None => {
-                        drop(locked_cache); // explicit unlock
-                        self.load_and_verify_module_and_dependencies(
-                            &module_id,
-                            bundle_verified,
-                            data_store,
-                            visited,
-                            friends_discovered,
-                            allow_dependency_loading_failure,
-                            dependencies_depth + 1,
-                        )?
-                    },
+                let loaded = match data_store.module_store.module_at(&module_id) {
+                    None => self.load_and_verify_module_and_dependencies(
+                        &module_id,
+                        bundle_verified,
+                        data_store,
+                        visited,
+                        friends_discovered,
+                        allow_dependency_loading_failure,
+                        dependencies_depth + 1,
+                    )?,
                     Some(cached) => cached,
                 };
                 cached_deps.push(loaded);
@@ -972,16 +977,16 @@ impl Loader {
         //   If the module under verification declares a friend which is also in the bundle (and
         //   positioned after this module in the bundle), we defer the loading of that module when
         //   it is the module's turn in the bundle.
-        let locked_cache = self.module_cache.read();
+
+        // FIXME: Is there concurrency issue?
         let new_imm_friends: Vec<_> = friends_discovered
             .into_iter()
             .filter(|mid| {
-                !locked_cache.has_module(mid)
+                !data_store.module_store.has_module(mid)
                     && !bundle_verified.contains_key(mid)
                     && !bundle_unverified.contains(mid)
             })
             .collect();
-        drop(locked_cache); // explicit unlock
 
         for module_id in new_imm_friends {
             self.load_and_verify_module_and_dependencies_and_friends(
@@ -1084,7 +1089,7 @@ impl Loader {
     }
 
     pub(crate) fn get_module(&self, idx: &ModuleId) -> Option<Arc<Module>> {
-        self.module_cache.read().modules.get(idx).cloned()
+        self.module_cache.fetch_module(idx)
     }
 
     fn get_script(&self, hash: &ScriptHash) -> Arc<Script> {
@@ -1101,8 +1106,7 @@ impl Loader {
         &self,
         name: &StructIdentifier,
     ) -> PartialVMResult<Arc<StructType>> {
-        self.module_cache
-            .read()
+        ModuleAdapter::new(Arc::clone(&self.module_cache) as Arc<dyn ModuleStorage>)
             .resolve_struct_by_name(&name.name, &name.module)
     }
 }
