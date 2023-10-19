@@ -146,6 +146,25 @@ impl ModuleAdapter {
             ),
         }
     }
+
+    pub(crate) fn function_at(&self, handle: &FunctionHandle) -> PartialVMResult<Arc<Function>> {
+        match handle {
+            FunctionHandle::Local(func) => Ok(func.clone()),
+            FunctionHandle::Remote { module, name } => {
+                self.modules
+                    .fetch_module(module)
+                    .and_then(|module| {
+                        let idx = module.function_map.get(name)?;
+                        module.function_defs.get(*idx).cloned()
+                    })
+                    .ok_or_else(|| {
+                        PartialVMError::new(StatusCode::TYPE_RESOLUTION_FAILURE).with_message(
+                            format!("Failed to resolve function: {:?}::{:?}", module, name),
+                        )
+                    })
+            },
+        }
+    }
 }
 
 // A Module is very similar to a binary Module but data is "transformed" to a representation

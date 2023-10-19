@@ -56,20 +56,15 @@ impl AccountDataCache {
 /// and pass it to the Move VM.
 pub(crate) struct TransactionDataCache<'r> {
     remote: &'r dyn MoveResolver,
-    pub(crate) module_store: ModuleAdapter,
     account_map: BTreeMap<AccountAddress, AccountDataCache>,
 }
 
 impl<'r> TransactionDataCache<'r> {
     /// Create a `TransactionDataCache` with a `RemoteCache` that provides access to data
     /// not updated in the transaction.
-    pub(crate) fn new(
-        remote: &'r dyn MoveResolver,
-        module_storage: Arc<dyn ModuleStorage>,
-    ) -> Self {
+    pub(crate) fn new(remote: &'r dyn MoveResolver) -> Self {
         TransactionDataCache {
             remote,
-            module_store: ModuleAdapter::new(module_storage),
             account_map: BTreeMap::new(),
         }
     }
@@ -170,6 +165,7 @@ impl<'r> TransactionDataCache<'r> {
         loader: &Loader,
         addr: AccountAddress,
         ty: &Type,
+        module_store: &ModuleAdapter,
     ) -> PartialVMResult<(&mut GlobalValue, Option<NumBytes>)> {
         let account_cache = Self::get_mut_or_insert_with(&mut self.account_map, &addr, || {
             (addr, AccountDataCache::new())
@@ -189,7 +185,7 @@ impl<'r> TransactionDataCache<'r> {
             let (ty_layout, has_aggregator_lifting) =
                 loader.type_to_type_layout_with_identifier_mappings(ty)?;
 
-            let module = self.module_store.module_at(&ty_tag.module_id());
+            let module = module_store.module_at(&ty_tag.module_id());
             let metadata: &[Metadata] = match &module {
                 Some(module) => &module.module().metadata,
                 None => &[],

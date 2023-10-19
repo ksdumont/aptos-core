@@ -6,7 +6,7 @@ use crate::{
     config::VMConfig,
     data_cache::TransactionDataCache,
     interpreter::Interpreter,
-    loader::{Function, LoadedFunction, Loader},
+    loader::{Function, LoadedFunction, Loader, ModuleAdapter, ModuleStorage},
     native_extensions::NativeContextExtensions,
     native_functions::{NativeFunction, NativeFunctions},
     session::{LoadedFunctionInstantiation, SerializedReturnValues},
@@ -54,6 +54,7 @@ impl VMRuntime {
         modules: Vec<Vec<u8>>,
         sender: AccountAddress,
         data_store: &mut TransactionDataCache,
+        module_store: &ModuleAdapter,
         _gas_meter: &mut impl GasMeter,
         compat: Compatibility,
     ) -> VMResult<()> {
@@ -106,7 +107,9 @@ impl VMRuntime {
             let module_id = module.self_id();
 
             if data_store.exists_module(&module_id)? && compat.need_check_compat() {
-                let old_module_ref = self.loader.load_module(&module_id, data_store)?;
+                let old_module_ref =
+                    self.loader
+                        .load_module(&module_id, data_store, module_store)?;
                 let old_module = old_module_ref.module();
                 let old_m = normalized::Module::new(old_module);
                 let new_m = normalized::Module::new(module);
@@ -121,8 +124,11 @@ impl VMRuntime {
         }
 
         // Perform bytecode and loading verification. Modules must be sorted in topological order.
-        self.loader
-            .verify_module_bundle_for_publication(&compiled_modules, data_store)?;
+        self.loader.verify_module_bundle_for_publication(
+            &compiled_modules,
+            data_store,
+            module_store,
+        )?;
 
         // NOTE: we want to (informally) argue that all modules pass the linking check before being
         // published to the data store.
@@ -315,6 +321,7 @@ impl VMRuntime {
         return_types: Vec<Type>,
         serialized_args: Vec<impl Borrow<[u8]>>,
         data_store: &mut TransactionDataCache,
+        module_store: &ModuleAdapter,
         gas_meter: &mut impl GasMeter,
         extensions: &mut NativeContextExtensions,
     ) -> VMResult<SerializedReturnValues> {
@@ -345,6 +352,7 @@ impl VMRuntime {
             ty_args,
             deserialized_args,
             data_store,
+            module_store,
             gas_meter,
             extensions,
             &self.loader,
@@ -385,6 +393,7 @@ impl VMRuntime {
         ty_args: Vec<TypeTag>,
         serialized_args: Vec<impl Borrow<[u8]>>,
         data_store: &mut TransactionDataCache,
+        module_store: &ModuleAdapter,
         gas_meter: &mut impl GasMeter,
         extensions: &mut NativeContextExtensions,
         bypass_declared_entry_check: bool,
@@ -392,13 +401,14 @@ impl VMRuntime {
         // load the function
         let (module, function, instantiation) =
             self.loader
-                .load_function(module, function_name, &ty_args, data_store)?;
+                .load_function(module, function_name, &ty_args, data_store, module_store)?;
 
         self.execute_function_instantiation(
             LoadedFunction { module, function },
             instantiation,
             serialized_args,
             data_store,
+            module_store,
             gas_meter,
             extensions,
             bypass_declared_entry_check,
@@ -411,6 +421,7 @@ impl VMRuntime {
         function_instantiation: LoadedFunctionInstantiation,
         serialized_args: Vec<impl Borrow<[u8]>>,
         data_store: &mut TransactionDataCache,
+        module_store: &ModuleAdapter,
         gas_meter: &mut impl GasMeter,
         extensions: &mut NativeContextExtensions,
         bypass_declared_entry_check: bool,
@@ -459,6 +470,7 @@ impl VMRuntime {
             return_,
             serialized_args,
             data_store,
+            module_store,
             gas_meter,
             extensions,
         )
@@ -471,6 +483,7 @@ impl VMRuntime {
         ty_args: Vec<TypeTag>,
         serialized_args: Vec<impl Borrow<[u8]>>,
         data_store: &mut TransactionDataCache,
+        module_store: &ModuleAdapter,
         gas_meter: &mut impl GasMeter,
         extensions: &mut NativeContextExtensions,
     ) -> VMResult<SerializedReturnValues> {
@@ -484,7 +497,7 @@ impl VMRuntime {
             },
         ) = self
             .loader
-            .load_script(script.borrow(), &ty_args, data_store)?;
+            .load_script(script.borrow(), &ty_args, data_store, module_store)?;
         // execute the function
         self.execute_function_impl(
             func,
@@ -493,6 +506,7 @@ impl VMRuntime {
             return_,
             serialized_args,
             data_store,
+            module_store,
             gas_meter,
             extensions,
         )

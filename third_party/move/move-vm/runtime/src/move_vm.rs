@@ -3,9 +3,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::{
-    config::VMConfig, data_cache::TransactionDataCache, loader::ModuleStorage,
-    native_extensions::NativeContextExtensions, native_functions::NativeFunction,
-    runtime::VMRuntime, session::Session,
+    config::VMConfig,
+    data_cache::TransactionDataCache,
+    loader::{ModuleAdapter, ModuleStorage},
+    native_extensions::NativeContextExtensions,
+    native_functions::NativeFunction,
+    runtime::VMRuntime,
+    session::Session,
 };
 use move_binary_format::{
     errors::{Location, VMResult},
@@ -65,9 +69,9 @@ impl MoveVM {
     ) -> Session<'r, '_> {
         Session {
             move_vm: self,
-            data_cache: TransactionDataCache::new(
-                remote,
-                Arc::clone(&self.runtime.loader().module_cache) as Arc<dyn ModuleStorage>,
+            data_cache: TransactionDataCache::new(remote),
+            module_store: ModuleAdapter::new(
+                Arc::clone(&self.runtime.loader().module_cache) as Arc<dyn ModuleStorage>
             ),
             native_extensions,
         }
@@ -83,9 +87,9 @@ impl MoveVM {
             .loader()
             .load_module(
                 module_id,
-                &TransactionDataCache::new(
-                    remote,
-                    Arc::clone(&self.runtime.loader().module_cache) as Arc<dyn ModuleStorage>,
+                &TransactionDataCache::new(remote),
+                &ModuleAdapter::new(
+                    Arc::clone(&self.runtime.loader().module_cache) as Arc<dyn ModuleStorage>
                 ),
             )
             .map(|arc_module| arc_module.arc_module())
