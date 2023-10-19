@@ -65,6 +65,7 @@ module aptos_framework::resource_account {
     use std::signer;
     use std::vector;
     use aptos_framework::account;
+    use aptos_framework::account_v2;
     use aptos_framework::aptos_coin::AptosCoin;
     use aptos_framework::coin;
     use aptos_std::simple_map::{Self, SimpleMap};
@@ -172,13 +173,16 @@ module aptos_framework::resource_account {
         let resource_addr = signer::address_of(resource);
         let (resource_signer_cap, empty_container) = {
             let container = borrow_global_mut<Container>(source_addr);
-            assert!(simple_map::contains_key(&container.store, &resource_addr), error::invalid_argument(EUNAUTHORIZED_NOT_OWNER));
+            assert!(
+                simple_map::contains_key(&container.store, &resource_addr),
+                error::invalid_argument(EUNAUTHORIZED_NOT_OWNER)
+            );
             let (_resource_addr, signer_cap) = simple_map::remove(&mut container.store, &resource_addr);
             (signer_cap, simple_map::length(&container.store) == 0)
         };
 
         if (empty_container) {
-            let container = move_from(source_addr);
+            let container = move_from<Container>(source_addr);
             let Container { store } = container;
             simple_map::destroy_empty(store);
         };
@@ -186,6 +190,26 @@ module aptos_framework::resource_account {
         account::rotate_authentication_key_internal(resource, ZERO_AUTH_KEY);
         resource_signer_cap
     }
+
+    public entry fun create_resource_account_v2(
+        origin: &signer,
+        seed: vector<u8>,
+    ) {
+        let resource = &account_v2::create_resource_account(origin, seed);
+        account_v2::update_native_authenticator_impl(resource, account_v2::gen_native_authenticator(ZERO_AUTH_KEY, 0));
+    }
+
+    public entry fun create_resource_account_v2_and_publish_package(
+        origin: &signer,
+        seed: vector<u8>,
+        metadata_serialized: vector<u8>,
+        code: vector<vector<u8>>,
+    ) {
+        let resource = &account_v2::create_resource_account(origin, seed);
+        aptos_framework::code::publish_package_txn(resource, metadata_serialized, code);
+        account_v2::update_native_authenticator_impl(resource, account_v2::gen_native_authenticator(ZERO_AUTH_KEY, 0));
+    }
+
 
     #[test(user = @0x1111)]
     public entry fun test_create_account_and_retrieve_cap(user: signer) acquires Container {
@@ -206,7 +230,9 @@ module aptos_framework::resource_account {
 
     #[test(user = @0x1111)]
     #[expected_failure(abort_code = 0x10002, location = aptos_std::simple_map)]
-    public entry fun test_create_account_and_retrieve_cap_resource_address_does_not_exist(user: signer) acquires Container {
+    public entry fun test_create_account_and_retrieve_cap_resource_address_does_not_exist(
+        user: signer
+    ) acquires Container {
         let user_addr = signer::address_of(&user);
         account::create_account(user_addr);
 

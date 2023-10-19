@@ -7,6 +7,8 @@ module aptos_framework::transaction_fee {
     use std::error;
     use std::option::{Self, Option};
     use aptos_framework::event;
+    use aptos_framework::fungible_asset;
+    use aptos_framework::fungible_asset::{FungibleAsset, MintRef, TransferRef, BurnRef};
 
     friend aptos_framework::block;
     friend aptos_framework::genesis;
@@ -20,6 +22,9 @@ module aptos_framework::transaction_fee {
     /// The burn percentage is out of range [0, 100].
     const EINVALID_BURN_PERCENTAGE: u64 = 3;
 
+    /// The passed-in fungible asset is not Aptos FA.
+    const ENOT_APTOS_FA: u64 = 4;
+
     /// Stores burn capability to burn the gas fees.
     struct AptosCoinCapabilities has key {
         burn_cap: BurnCapability<AptosCoin>,
@@ -28,6 +33,12 @@ module aptos_framework::transaction_fee {
     /// Stores mint capability to mint the refunds.
     struct AptosCoinMintCapability has key {
         mint_cap: MintCapability<AptosCoin>,
+    }
+
+    struct AptosFungibleAssetRefs has key {
+        mint_ref: MintRef,
+        transfer_ref: TransferRef,
+        burn_ref: BurnRef,
     }
 
     /// Stores information about the block proposer and the amount of fees
@@ -231,6 +242,36 @@ module aptos_framework::transaction_fee {
         system_addresses::assert_aptos_framework(aptos_framework);
         move_to(aptos_framework, AptosCoinMintCapability { mint_cap })
     }
+
+    public fun aptos_coin_to_fa(
+        coin: Coin<AptosCoin>
+    ): FungibleAsset acquires AptosCoinCapabilities, AptosFungibleAssetRefs {
+        let value = coin::value(&coin);
+        coin::burn(
+            coin,
+            &borrow_global<AptosCoinCapabilities>(@aptos_framework).burn_cap,
+        );
+        fungible_asset::mint(&borrow_global<AptosFungibleAssetRefs>(@aptos_framework).mint_ref, value)
+    }
+
+    public fun aptos_fa_to_coin(
+        fa: FungibleAsset
+    ): Coin<AptosCoin> acquires AptosCoinMintCapability, AptosFungibleAssetRefs {
+        let burn_ref = &borrow_global<AptosFungibleAssetRefs>(@aptos_framework).burn_ref;
+        assert!(fungible_asset::asset_metadata(&fa) == fungible_asset::burn_ref_metadata(burn_ref), ENOT_APTOS_FA);
+        let value = fungible_asset::amount(&fa);
+        fungible_asset::burn(burn_ref, fa);
+        coin::mint(
+            value,
+            &borrow_global<AptosCoinMintCapability>(@aptos_framework).mint_cap,
+        )
+    }
+
+    /// Only called by coin.move to convert between Aptos Coin and Aptos FA.
+    fun burn_aptos_coin(coin_to_burn: Coin<AptosCoin>) acquires AptosCoinCapabilities {}
+
+    /// Only called by coin.move to convert between Aptos Coin and Aptos FA.
+    public(friend) fun mint_aptos_coin(amount_to_mint: u64): Coin<AptosCoin> acquires AptosCoinMintCapability {}
 
     // Will be deleted after the mint cap is copied on both mainnet and testnet. New networks will get it from genesis.
     public fun initialize_storage_refund(aptos_framework: &signer) {

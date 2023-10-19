@@ -7,6 +7,7 @@ module aptos_framework::aptos_account {
     use std::error;
     use std::signer;
     use std::vector;
+    use aptos_framework::account_v2;
 
     friend aptos_framework::genesis;
     friend aptos_framework::resource_account;
@@ -115,7 +116,7 @@ module aptos_framework::aptos_account {
     }
 
     public fun assert_account_exists(addr: address) {
-        assert!(account::exists_at(addr), error::not_found(EACCOUNT_NOT_FOUND));
+        assert!(account::exists_at(addr) || account_v2::exists_at(addr), error::not_found(EACCOUNT_NOT_FOUND));
     }
 
     public fun assert_account_is_registered_for_apt(addr: address) {

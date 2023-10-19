@@ -10,6 +10,7 @@
 /// on account to have access to this.
 module aptos_framework::create_signer {
     friend aptos_framework::account;
+    friend aptos_framework::account_v2;
     friend aptos_framework::aptos_account;
     friend aptos_framework::genesis;
     friend aptos_framework::multisig_account;

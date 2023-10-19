@@ -6,9 +6,14 @@ module aptos_framework::transaction_validation {
     use std::vector;
 
     use aptos_framework::account;
+    use aptos_framework::account_v2;
     use aptos_framework::aptos_coin::AptosCoin;
     use aptos_framework::chain_id;
     use aptos_framework::coin;
+    use aptos_framework::fungible_asset;
+    use aptos_framework::object;
+    use aptos_framework::object::ObjectCore;
+    use aptos_framework::primary_fungible_store;
     use aptos_framework::system_addresses;
     use aptos_framework::timestamp;
     use aptos_framework::transaction_fee;
@@ -87,17 +92,34 @@ module aptos_framework::transaction_validation {
 
         if (
             transaction_sender == gas_payer
-            || account::exists_at(transaction_sender)
-            || !features::sponsored_automatic_account_creation_enabled()
-            || txn_sequence_number > 0
+                || (account::exists_at(transaction_sender) || account_v2::exists_at(transaction_sender))
+                || !features::sponsored_automatic_account_creation_enabled()
+                || txn_sequence_number > 0
         ) {
-            assert!(account::exists_at(transaction_sender), error::invalid_argument(PROLOGUE_EACCOUNT_DOES_NOT_EXIST));
-            assert!(
-                txn_authentication_key == account::get_authentication_key(transaction_sender),
-                error::invalid_argument(PROLOGUE_EINVALID_ACCOUNT_AUTH_KEY),
-            );
+           let account_sequence_number =
+            if (account::exists_at(transaction_sender)) {
+                assert!(
+                    txn_authentication_key == account::get_authentication_key(transaction_sender),
+                    error::invalid_argument(PROLOGUE_EINVALID_ACCOUNT_AUTH_KEY),
+                );
+                account::get_sequence_number(transaction_sender)
+            } else if (account_v2::exists_at(transaction_sender)) {
+                if (account_v2::use_native_authenticator(transaction_sender)) {
+                    assert!(txn_authentication_key == account_v2::get_native_authentication_key(transaction_sender),
+                        error::invalid_argument(PROLOGUE_EINVALID_ACCOUNT_AUTH_KEY));
+                } else if (account_v2::use_customized_authenticator(transaction_sender)) {
+                    // TODO: AA validation, maybe use a native function
+                    assert!(vector::is_empty(&txn_authentication_key), PROLOGUE_EINVALID_ACCOUNT_AUTH_KEY);
+                } else {
+                    // todo: error code
+                    abort error::invalid_argument(PROLOGUE_EACCOUNT_DOES_NOT_EXIST));
+                };
+                account_v2::get_sequence_number(transaction_sender)
+            } else {
+                // todo: error code
+                abort error::invalid_argument(PROLOGUE_EACCOUNT_DOES_NOT_EXIST);
+            };
 
-            let account_sequence_number = account::get_sequence_number(transaction_sender);
             assert!(
                 txn_sequence_number < (1u64 << 63),
                 error::out_of_range(PROLOGUE_ESEQUENCE_NUMBER_TOO_BIG)
@@ -126,6 +148,7 @@ module aptos_framework::transaction_validation {
             );
         };
 
+
         let max_transaction_fee = txn_gas_price * txn_max_gas_units;
         assert!(
             coin::is_account_registered<AptosCoin>(gas_payer),
@@ -145,7 +168,16 @@ module aptos_framework::transaction_validation {
         chain_id: u8,
     ) {
         let gas_payer = signer::address_of(&sender);
-        prologue_common(sender, gas_payer, txn_sequence_number, txn_public_key, txn_gas_price, txn_max_gas_units, txn_expiration_time, chain_id)
+        prologue_common(
+            sender,
+            gas_payer,
+            txn_sequence_number,
+            txn_public_key,
+            txn_gas_price,
+            txn_max_gas_units,
+            txn_expiration_time,
+            chain_id
+        )
     }
 
     fun script_prologue(
@@ -159,7 +191,16 @@ module aptos_framework::transaction_validation {
         _script_hash: vector<u8>,
     ) {
         let gas_payer = signer::address_of(&sender);
-        prologue_common(sender, gas_payer, txn_sequence_number, txn_public_key, txn_gas_price, txn_max_gas_units, txn_expiration_time, chain_id)
+        prologue_common(
+            sender,
+            gas_payer,
+            txn_sequence_number,
+            txn_public_key,
+            txn_gas_price,
+            txn_max_gas_units,
+            txn_expiration_time,
+            chain_id
+        )
     }
 
     fun multi_agent_script_prologue(
@@ -203,8 +244,8 @@ module aptos_framework::transaction_validation {
                 invariant i <= num_secondary_signers;
                 invariant forall j in 0..i:
                     account::exists_at(secondary_signer_addresses[j])
-                    && secondary_signer_public_key_hashes[j]
-                       == account::get_authentication_key(secondary_signer_addresses[j]);
+                        && secondary_signer_public_key_hashes[j]
+                        == account::get_authentication_key(secondary_signer_addresses[j]);
             };
             (i < num_secondary_signers)
         }) {
@@ -284,8 +325,14 @@ module aptos_framework::transaction_validation {
         let transaction_fee_amount = txn_gas_price * gas_used;
         // it's important to maintain the error code consistent with vm
         // to do failed transaction cleanup.
+        let aptos_coin_balance = if (coin::is_account_registered<AptosCoin>(gas_payer)) {
+            coin::balance<AptosCoin>(gas_payer)
+        } else {
+            0
+        };
+        let aptos_fa_balance = primary_fungible_store::balance(gas_payer, APTOS_FA_METADATA_ADDRESS);
         assert!(
-            coin::balance<AptosCoin>(gas_payer) >= transaction_fee_amount,
+            aptos_coin_balance >= transaction_fee_amount,
             error::out_of_range(PROLOGUE_ECANT_PAY_GAS_DEPOSIT),
         );
 

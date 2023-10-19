@@ -9,6 +9,7 @@ module aptos_framework::event {
     use std::features;
 
     friend aptos_framework::account;
+    friend aptos_framework::account_v2;
     friend aptos_framework::object;
 
     /// Module event feature is not supported.
