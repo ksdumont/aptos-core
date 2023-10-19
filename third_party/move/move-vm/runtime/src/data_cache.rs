@@ -2,7 +2,7 @@
 // Copyright (c) The Move Contributors
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::loader::{Loader, ModuleAdapter, ModuleStorage};
+use crate::loader::{Loader, ModuleAdapter};
 use bytes::Bytes;
 use move_binary_format::errors::*;
 use move_core_types::{
@@ -22,7 +22,6 @@ use move_vm_types::{
 };
 use std::{
     collections::{btree_map::BTreeMap, hash_map::HashMap},
-    sync::Arc,
 };
 
 pub struct AccountDataCache {
@@ -183,7 +182,7 @@ impl<'r> TransactionDataCache<'r> {
             };
             // TODO(Gas): Shall we charge for this?
             let (ty_layout, has_aggregator_lifting) =
-                loader.type_to_type_layout_with_identifier_mappings(ty)?;
+                loader.type_to_type_layout_with_identifier_mappings(ty, module_store)?;
 
             let module = module_store.module_at(&ty_tag.module_id());
             let metadata: &[Metadata] = match &module {

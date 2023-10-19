@@ -1116,14 +1116,6 @@ impl Loader {
                 .expect("Script hash on Function must exist"),
         )
     }
-
-    pub(crate) fn get_struct_type_by_identifier(
-        &self,
-        name: &StructIdentifier,
-    ) -> PartialVMResult<Arc<StructType>> {
-        ModuleAdapter::new(Arc::clone(&self.module_cache) as Arc<dyn ModuleStorage>)
-            .resolve_struct_by_name(&name.name, &name.module)
-    }
 }
 
 //
@@ -1457,7 +1449,7 @@ impl<'a> Resolver<'a> {
     }
 
     pub(crate) fn type_to_type_layout(&self, ty: &Type) -> PartialVMResult<MoveTypeLayout> {
-        self.loader.type_to_type_layout(ty)
+        self.loader.type_to_type_layout(ty, &self.module_store)
     }
 
     pub(crate) fn type_to_type_layout_with_identifier_mappings(
@@ -1471,7 +1463,8 @@ impl<'a> Resolver<'a> {
         &self,
         ty: &Type,
     ) -> PartialVMResult<MoveTypeLayout> {
-        self.loader.type_to_fully_annotated_layout(ty)
+        self.loader
+            .type_to_fully_annotated_layout(ty, &self.module_store)
     }
 
     // get the loader
@@ -1660,6 +1653,7 @@ impl Loader {
 
     fn struct_name_to_type_layout(
         &self,
+        module_store: &ModuleAdapter,
         name: &StructIdentifier,
         ty_args: &[Type],
         count: &mut u64,
@@ -1678,7 +1672,7 @@ impl Loader {
         }
 
         let count_before = *count;
-        let struct_type = self.get_struct_type_by_identifier(name)?;
+        let struct_type = module_store.resolve_struct_by_name(&name.name, &name.module)?;
 
         // Some types can have fields which are lifted at serialization or deserialization
         // times. Right now these are Aggregator and AggregatorSnapshot.
@@ -1692,7 +1686,7 @@ impl Loader {
         let (mut field_layouts, field_has_identifier_mappings): (Vec<MoveTypeLayout>, Vec<bool>) =
             field_tys
                 .iter()
-                .map(|ty| self.type_to_type_layout_impl(ty, count, depth + 1))
+                .map(|ty| self.type_to_type_layout_impl(ty, module_store, count, depth + 1))
                 .collect::<PartialVMResult<Vec<_>>>()?
                 .into_iter()
                 .unzip();
@@ -1761,6 +1755,7 @@ impl Loader {
     fn type_to_type_layout_impl(
         &self,
         ty: &Type,
+        module_store: &ModuleAdapter,
         count: &mut u64,
         depth: u64,
     ) -> PartialVMResult<(MoveTypeLayout, bool)> {
@@ -1810,7 +1805,7 @@ impl Loader {
             Type::Vector(ty) => {
                 *count += 1;
                 let (layout, has_identifier_mappings) =
-                    self.type_to_type_layout_impl(ty, count, depth + 1)?;
+                    self.type_to_type_layout_impl(ty, module_store, count, depth + 1)?;
                 (
                     MoveTypeLayout::Vector(Box::new(layout)),
                     has_identifier_mappings,
@@ -1820,14 +1815,14 @@ impl Loader {
                 *count += 1;
                 // Note depth is incread inside struct_name_to_type_layout instead.
                 let (layout, has_identifier_mappings) =
-                    self.struct_name_to_type_layout(name, &[], count, depth)?;
+                    self.struct_name_to_type_layout(module_store, name, &[], count, depth)?;
                 (MoveTypeLayout::Struct(layout), has_identifier_mappings)
             },
             Type::StructInstantiation { name, ty_args, .. } => {
                 *count += 1;
                 // Note depth is incread inside struct_name_to_type_layout instead.
                 let (layout, has_identifier_mappings) =
-                    self.struct_name_to_type_layout(name, ty_args, count, depth)?;
+                    self.struct_name_to_type_layout(module_store, name, ty_args, count, depth)?;
                 (MoveTypeLayout::Struct(layout), has_identifier_mappings)
             },
             Type::Reference(_) | Type::MutableReference(_) | Type::TyParam(_) => {
@@ -1842,6 +1837,7 @@ impl Loader {
     fn struct_name_to_fully_annotated_layout(
         &self,
         name: &StructIdentifier,
+        module_store: &ModuleAdapter,
         ty_args: &[Type],
         count: &mut u64,
         depth: u64,
@@ -1857,7 +1853,7 @@ impl Loader {
             }
         }
 
-        let struct_type = self.get_struct_type_by_identifier(name)?;
+        let struct_type = module_store.resolve_struct_by_name(&name.name, &name.module)?;
         if struct_type.fields.len() != struct_type.field_names.len() {
             return Err(
                 PartialVMError::new(StatusCode::UNKNOWN_INVARIANT_VIOLATION_ERROR).with_message(
@@ -1881,7 +1877,8 @@ impl Loader {
             .zip(&struct_type.fields)
             .map(|(n, ty)| {
                 let ty = self.subst(ty, ty_args)?;
-                let l = self.type_to_fully_annotated_layout_impl(&ty, count, depth + 1)?;
+                let l =
+                    self.type_to_fully_annotated_layout_impl(&ty, module_store, count, depth + 1)?;
                 Ok(MoveFieldLayout::new(n.clone(), l))
             })
             .collect::<PartialVMResult<Vec<_>>>()?;
@@ -1904,6 +1901,7 @@ impl Loader {
     fn type_to_fully_annotated_layout_impl(
         &self,
         ty: &Type,
+        module_store: &ModuleAdapter,
         count: &mut u64,
         depth: u64,
     ) -> PartialVMResult<MoveTypeLayout> {
@@ -1924,14 +1922,20 @@ impl Loader {
             Type::Address => MoveTypeLayout::Address,
             Type::Signer => MoveTypeLayout::Signer,
             Type::Vector(ty) => MoveTypeLayout::Vector(Box::new(
-                self.type_to_fully_annotated_layout_impl(ty, count, depth + 1)?,
+                self.type_to_fully_annotated_layout_impl(ty, module_store, count, depth + 1)?,
             )),
             Type::Struct { name, .. } => MoveTypeLayout::Struct(
-                self.struct_name_to_fully_annotated_layout(name, &[], count, depth)?,
+                self.struct_name_to_fully_annotated_layout(name, module_store, &[], count, depth)?,
             ),
-            Type::StructInstantiation { name, ty_args, .. } => MoveTypeLayout::Struct(
-                self.struct_name_to_fully_annotated_layout(name, ty_args, count, depth)?,
-            ),
+            Type::StructInstantiation { name, ty_args, .. } => {
+                MoveTypeLayout::Struct(self.struct_name_to_fully_annotated_layout(
+                    name,
+                    module_store,
+                    ty_args,
+                    count,
+                    depth,
+                )?)
+            },
             Type::Reference(_) | Type::MutableReference(_) | Type::TyParam(_) => {
                 return Err(
                     PartialVMError::new(StatusCode::UNKNOWN_INVARIANT_VIOLATION_ERROR)
@@ -1944,17 +1948,18 @@ impl Loader {
     pub(crate) fn calculate_depth_of_struct(
         &self,
         name: &StructIdentifier,
+        module_store: &ModuleAdapter,
     ) -> PartialVMResult<DepthFormula> {
         if let Some(depth_formula) = self.type_cache.read().depth_formula.get(name) {
             return Ok(depth_formula.clone());
         }
 
-        let struct_type = self.get_struct_type_by_identifier(name)?;
+        let struct_type = module_store.resolve_struct_by_name(&name.name, &name.module)?;
 
         let formulas = struct_type
             .fields
             .iter()
-            .map(|field_type| self.calculate_depth_of_type(field_type))
+            .map(|field_type| self.calculate_depth_of_type(field_type, module_store))
             .collect::<PartialVMResult<Vec<_>>>()?;
         let formula = DepthFormula::normalize(formulas);
         let prev = self
@@ -1971,7 +1976,11 @@ impl Loader {
         Ok(formula)
     }
 
-    fn calculate_depth_of_type(&self, ty: &Type) -> PartialVMResult<DepthFormula> {
+    fn calculate_depth_of_type(
+        &self,
+        ty: &Type,
+        module_store: &ModuleAdapter,
+    ) -> PartialVMResult<DepthFormula> {
         Ok(match ty {
             Type::Bool
             | Type::U8
@@ -1983,13 +1992,13 @@ impl Loader {
             | Type::U32
             | Type::U256 => DepthFormula::constant(1),
             Type::Vector(ty) | Type::Reference(ty) | Type::MutableReference(ty) => {
-                let mut inner = self.calculate_depth_of_type(ty)?;
+                let mut inner = self.calculate_depth_of_type(ty, module_store)?;
                 inner.scale(1);
                 inner
             },
             Type::TyParam(ty_idx) => DepthFormula::type_parameter(*ty_idx),
             Type::Struct { name, .. } => {
-                let mut struct_formula = self.calculate_depth_of_struct(name)?;
+                let mut struct_formula = self.calculate_depth_of_struct(name, module_store)?;
                 debug_assert!(struct_formula.terms.is_empty());
                 struct_formula.scale(1);
                 struct_formula
@@ -2000,10 +2009,10 @@ impl Loader {
                     .enumerate()
                     .map(|(idx, ty)| {
                         let var = idx as TypeParameterIndex;
-                        Ok((var, self.calculate_depth_of_type(ty)?))
+                        Ok((var, self.calculate_depth_of_type(ty, module_store)?))
                     })
                     .collect::<PartialVMResult<BTreeMap<_, _>>>()?;
-                let struct_formula = self.calculate_depth_of_struct(name)?;
+                let struct_formula = self.calculate_depth_of_struct(name, module_store)?;
                 let mut subst_struct_formula = struct_formula.subst(ty_arg_map)?;
                 subst_struct_formula.scale(1);
                 subst_struct_formula
@@ -2024,24 +2033,27 @@ impl Loader {
     pub(crate) fn type_to_type_layout_with_identifier_mappings(
         &self,
         ty: &Type,
+        module_store: &ModuleAdapter,
     ) -> PartialVMResult<(MoveTypeLayout, bool)> {
         let mut count = 0;
-        self.type_to_type_layout_impl(ty, &mut count, 1)
+        self.type_to_type_layout_impl(ty, module_store, &mut count, 1)
     }
 
-    pub(crate) fn type_to_type_layout(&self, ty: &Type) -> PartialVMResult<MoveTypeLayout> {
+    pub(crate) fn type_to_type_layout(&self, ty: &Type, 
+        module_store: &ModuleAdapter) -> PartialVMResult<MoveTypeLayout> {
         let mut count = 0;
         let (layout, _has_identifier_mappings) =
-            self.type_to_type_layout_impl(ty, &mut count, 1)?;
+            self.type_to_type_layout_impl(ty, module_store, &mut count, 1)?;
         Ok(layout)
     }
 
     pub(crate) fn type_to_fully_annotated_layout(
         &self,
         ty: &Type,
+        module_store: &ModuleAdapter,
     ) -> PartialVMResult<MoveTypeLayout> {
         let mut count = 0;
-        self.type_to_fully_annotated_layout_impl(ty, &mut count, 1)
+        self.type_to_fully_annotated_layout_impl(ty, module_store, &mut count, 1)
     }
 }
 
@@ -2054,7 +2066,7 @@ impl Loader {
         module_storage: &ModuleAdapter,
     ) -> VMResult<MoveTypeLayout> {
         let ty = self.load_type(type_tag, move_storage, module_storage)?;
-        self.type_to_type_layout(&ty)
+        self.type_to_type_layout(&ty, module_storage)
             .map_err(|e| e.finish(Location::Undefined))
     }
 
@@ -2065,7 +2077,7 @@ impl Loader {
         module_storage: &ModuleAdapter,
     ) -> VMResult<MoveTypeLayout> {
         let ty = self.load_type(type_tag, move_storage, module_storage)?;
-        self.type_to_fully_annotated_layout(&ty)
+        self.type_to_fully_annotated_layout(&ty, module_storage)
             .map_err(|e| e.finish(Location::Undefined))
     }
 }

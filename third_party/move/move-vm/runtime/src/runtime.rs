@@ -6,7 +6,7 @@ use crate::{
     config::VMConfig,
     data_cache::TransactionDataCache,
     interpreter::Interpreter,
-    loader::{Function, LoadedFunction, Loader, ModuleAdapter, ModuleStorage},
+    loader::{Function, LoadedFunction, Loader, ModuleAdapter},
     native_extensions::NativeContextExtensions,
     native_functions::{NativeFunction, NativeFunctions},
     session::{LoadedFunctionInstantiation, SerializedReturnValues},
@@ -196,8 +196,13 @@ impl VMRuntime {
         Ok(())
     }
 
-    fn deserialize_value(&self, ty: &Type, arg: impl Borrow<[u8]>) -> PartialVMResult<Value> {
-        let layout = match self.loader.type_to_type_layout(ty) {
+    fn deserialize_value(
+        &self,
+        module_store: &ModuleAdapter,
+        ty: &Type,
+        arg: impl Borrow<[u8]>,
+    ) -> PartialVMResult<Value> {
+        let layout = match self.loader.type_to_type_layout(ty, module_store) {
             Ok(layout) => layout,
             Err(_err) => {
                 return Err(PartialVMError::new(
@@ -218,6 +223,7 @@ impl VMRuntime {
 
     fn deserialize_args(
         &self,
+        module_store: &ModuleAdapter,
         arg_tys: Vec<Type>,
         serialized_args: Vec<impl Borrow<[u8]>>,
     ) -> PartialVMResult<(Locals, Vec<Value>)> {
@@ -245,14 +251,14 @@ impl VMRuntime {
                 Type::MutableReference(inner_t) | Type::Reference(inner_t) => {
                     dummy_locals.store_loc(
                         idx,
-                        self.deserialize_value(inner_t, arg_bytes)?,
+                        self.deserialize_value(module_store, inner_t, arg_bytes)?,
                         self.loader
                             .vm_config()
                             .enable_invariant_violation_check_in_swap_loc,
                     )?;
                     dummy_locals.borrow_loc(idx)
                 },
-                _ => self.deserialize_value(&arg_ty, arg_bytes),
+                _ => self.deserialize_value(module_store, &arg_ty, arg_bytes),
             })
             .collect::<PartialVMResult<Vec<_>>>()?;
         Ok((dummy_locals, deserialized_args))
@@ -260,6 +266,7 @@ impl VMRuntime {
 
     fn serialize_return_value(
         &self,
+        module_store: &ModuleAdapter,
         ty: &Type,
         value: Value,
     ) -> PartialVMResult<(Vec<u8>, MoveTypeLayout)> {
@@ -276,7 +283,7 @@ impl VMRuntime {
             _ => (ty, value),
         };
 
-        let layout = self.loader.type_to_type_layout(ty).map_err(|_err| {
+        let layout = self.loader.type_to_type_layout(ty, module_store).map_err(|_err| {
             PartialVMError::new(StatusCode::VERIFICATION_ERROR).with_message(
                 "entry point functions cannot have non-serializable return types".to_string(),
             )
@@ -290,6 +297,7 @@ impl VMRuntime {
 
     fn serialize_return_values(
         &self,
+        module_store: &ModuleAdapter,
         return_types: &[Type],
         return_values: Vec<Value>,
     ) -> PartialVMResult<Vec<(Vec<u8>, MoveTypeLayout)>> {
@@ -308,7 +316,7 @@ impl VMRuntime {
         return_types
             .iter()
             .zip(return_values)
-            .map(|(ty, value)| self.serialize_return_value(ty, value))
+            .map(|(ty, value)| self.serialize_return_value(module_store, ty, value))
             .collect()
     }
 
@@ -339,7 +347,7 @@ impl VMRuntime {
             })
             .collect::<Vec<_>>();
         let (mut dummy_locals, deserialized_args) = self
-            .deserialize_args(arg_types, serialized_args)
+            .deserialize_args(module_store, arg_types, serialized_args)
             .map_err(|e| e.finish(Location::Undefined))?;
         let return_types = return_types
             .into_iter()
@@ -359,7 +367,7 @@ impl VMRuntime {
         )?;
 
         let serialized_return_values = self
-            .serialize_return_values(&return_types, return_values)
+            .serialize_return_values(module_store, &return_types, return_values)
             .map_err(|e| e.finish(Location::Undefined))?;
         let serialized_mut_ref_outputs = mut_ref_args
             .into_iter()
@@ -371,7 +379,7 @@ impl VMRuntime {
                         .vm_config()
                         .enable_invariant_violation_check_in_swap_loc,
                 )?;
-                let (bytes, layout) = self.serialize_return_value(&ty, local_val)?;
+                let (bytes, layout) = self.serialize_return_value(module_store, &ty, local_val)?;
                 Ok((idx as LocalIndex, bytes, layout))
             })
             .collect::<PartialVMResult<_>>()
