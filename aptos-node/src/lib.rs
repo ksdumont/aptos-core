@@ -22,6 +22,7 @@ use aptos_config::config::{merge_node_config, NodeConfig, PersistableConfig};
 use aptos_framework::ReleaseBundle;
 use aptos_logger::{prelude::*, telemetry_log_writer::TelemetryLog, Level, LoggerFilterUpdater};
 use aptos_state_sync_driver::driver_factory::StateSyncRuntimes;
+use aptos_storage_interface::DbReader;
 use aptos_types::chain_id::ChainId;
 use clap::Parser;
 use futures::channel::mpsc;
@@ -602,6 +603,9 @@ pub fn setup_environment_and_start_node(
         peers_and_metadata.clone(),
     );
 
+    // Start the DB extractor
+    start_db_extractor(db_rw.reader.clone());
+
     // Bootstrap the API and indexer
     let (mempool_client_receiver, api_runtime, indexer_runtime, indexer_grpc_runtime) =
         services::bootstrap_api_and_indexer(&node_config, aptos_db, chain_id)?;
@@ -648,6 +652,58 @@ pub fn setup_environment_and_start_node(
         _state_sync_runtimes: state_sync_runtimes,
         _telemetry_runtime: telemetry_runtime,
     })
+}
+
+/*
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+pub struct TransactionListWithProof {
+    pub transactions: Vec<Transaction>,
+    pub events: Option<Vec<Vec<ContractEvent>>>,
+    pub first_transaction_version: Option<Version>,
+    pub proof: TransactionInfoListWithProof,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(any(test, feature = "fuzzing"), derive(Arbitrary))]
+pub struct TransactionInfoListWithProof {
+    pub ledger_info_to_transaction_infos_proof: TransactionAccumulatorRangeProof,
+    pub transaction_infos: Vec<TransactionInfo>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+pub struct TransactionOutputListWithProof {
+    pub transactions_and_outputs: Vec<(Transaction, TransactionOutput)>,
+    pub first_transaction_output_version: Option<Version>,
+    pub proof: TransactionInfoListWithProof,
+}
+ */
+
+fn start_db_extractor(reader: Arc<dyn DbReader>) {
+    let rt = Runtime::new().unwrap();
+    info!("Starting the DB extractor!");
+    rt.spawn(async move {
+        for i in 10..20 {
+            // Get the transactions, events and output
+            let transactions_and_events = reader.get_transactions(i, 1, i, true).unwrap();
+            let transaction_outputs = reader.get_transaction_outputs(i, 1, i).unwrap();
+
+            // Get the transaction, events, info and output
+            let transaction = transactions_and_events.transactions[0].clone();
+            let events = transactions_and_events.events.clone();
+            let transaction_info = transactions_and_events.proof.transaction_infos[0].clone();
+            let transaction_output = transaction_outputs.transactions_and_outputs[0].1.clone();
+
+            // Calculate the raw sizes
+            let raw_transaction_size = bcs::to_bytes(&transaction).unwrap().len();
+            let raw_events_size = bcs::to_bytes(&events).unwrap().len();
+            let raw_transaction_info_size = bcs::to_bytes(&transaction_info).unwrap().len();
+            let raw_transaction_output_size = bcs::to_bytes(&transaction_output).unwrap().len();
+
+            // Print the data sizes
+            info!("DATA ANALYSIS! Version: {}, Transaction size: {}, Event size: {}, Transaction info size: {}, Transaction output size: {}", i, raw_transaction_size, raw_events_size, raw_transaction_info_size, raw_transaction_output_size);
+        }
+        panic!("Finished extracting the data!");
+    });
 }
 
 #[test]
