@@ -464,6 +464,7 @@ bytes = { version = "1.4.0", features = ["serde"] }
 chrono = { version = "0.4.19", features = ["clock", "serde"] }
 cfg_block = "0.1.1"
 cfg-if = "1.0.0"
+ciborium = "0.2"
 claims = "0.7"
 clap = { version = "4.3.9", features = ["derive", "unstable-styles"] }
 clap_complete = "4.4.1"
@@ -473,6 +474,7 @@ concurrent-queue = "2.2.0"
 console-subscriber = "0.1.8"
 const_format = "0.2.26"
 core_affinity = "0.8.1"
+coset = "0.3"
 criterion = "0.3.5"
 criterion-cpu-time = "0.1.0"
 crossbeam = "0.8.1"
@@ -566,6 +568,9 @@ signature = "2.1.0"
 sec1 = "0.7.0"
 parking_lot = "0.12.0"
 paste = "1.0.7"
+passkey-authenticator = { git = "https://github.com/aptos-labs/passkey-rs", branch = "fix-passkey-rs", features = ["testable"] }
+passkey-client = { git = "https://github.com/aptos-labs/passkey-rs", branch = "fix-passkey-rs" }
+passkey-types = { git = "https://github.com/aptos-labs/passkey-rs", branch = "fix-passkey-rs" }
 pbjson = "0.5.1"
 percent-encoding = "2.1.0"
 pin-project = "1.0.10"
