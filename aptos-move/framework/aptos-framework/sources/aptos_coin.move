@@ -8,7 +8,12 @@ module aptos_framework::aptos_coin {
     use std::option::{Self, Option};
 
     use aptos_framework::coin::{Self, BurnCapability, MintCapability};
+    use aptos_framework::fungible_asset::{generate_mint_ref, generate_transfer_ref, generate_burn_ref};
+    use aptos_framework::object;
+    use aptos_framework::primary_fungible_store;
     use aptos_framework::system_addresses;
+    use aptos_framework::system_addresses::assert_aptos_framework;
+    use aptos_framework::transaction_fee;
 
     friend aptos_framework::genesis;
 
@@ -57,6 +62,26 @@ module aptos_framework::aptos_coin {
 
     public fun has_mint_capability(account: &signer): bool {
         exists<MintCapStore>(signer::address_of(account))
+    }
+
+    // Initialize the APT fungible asset once via governance proposal.
+    public entry fun initialize_aptos_fungible_asset(aptos_framework: &signer) {
+        assert_aptos_framework(aptos_framework);
+        let cref = &object::create_object_at_address(@aptos_framework);
+        primary_fungible_store::create_primary_store_enabled_fungible_asset(cref,
+            option::none(),
+            string::utf8(b"Aptos Coin"),
+            string::utf8(b"APT"),
+            8,
+            string::utf8(b"http://???"),
+            string::utf8(b"https://aptosfoundation.org/"),
+        );
+        transaction_fee::initialize_aptos_fa_refs(
+            aptos_framework,
+            generate_mint_ref(cref),
+            generate_transfer_ref(cref),
+            generate_burn_ref(cref)
+        );
     }
 
     /// Only called during genesis to destroy the aptos framework account's mint capability once all initial validators
@@ -160,7 +185,9 @@ module aptos_framework::aptos_coin {
 
     // This is particularly useful if the aggregator_factory is already initialized via another call path.
     #[test_only]
-    public fun initialize_for_test_without_aggregator_factory(aptos_framework: &signer): (BurnCapability<AptosCoin>, MintCapability<AptosCoin>) {
+    public fun initialize_for_test_without_aggregator_factory(
+        aptos_framework: &signer
+    ): (BurnCapability<AptosCoin>, MintCapability<AptosCoin>) {
         initialize(aptos_framework)
     }
 }
