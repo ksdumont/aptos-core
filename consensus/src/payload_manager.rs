@@ -3,11 +3,7 @@
 
 use crate::{
     counters,
-    network::NetworkSender,
-    quorum_store::{
-        batch_store::{BatchReader, BatchStore},
-        quorum_store_coordinator::CoordinatorCommand,
-    },
+    quorum_store::{batch_store::BatchReader, quorum_store_coordinator::CoordinatorCommand},
 };
 use aptos_consensus_types::{
     block::Block,
@@ -26,14 +22,14 @@ use tokio::sync::oneshot;
 /// If QuorumStore is enabled, has to ask BatchReader for the transaction behind the proofs of availability in the payload.
 pub enum PayloadManager {
     DirectMempool,
-    InQuorumStore(Arc<BatchStore<NetworkSender>>, Sender<CoordinatorCommand>),
+    InQuorumStore(Arc<dyn BatchReader>, Sender<CoordinatorCommand>),
 }
 
 impl PayloadManager {
     fn request_transactions(
         proofs: Vec<ProofOfStore>,
         block_timestamp: u64,
-        batch_store: &BatchStore<NetworkSender>,
+        batch_reader: Arc<dyn BatchReader>,
     ) -> Vec<(
         HashValue,
         oneshot::Receiver<ExecutorResult<Vec<SignedTransaction>>>,
@@ -47,7 +43,7 @@ impl PayloadManager {
                 block_timestamp
             );
             if block_timestamp <= pos.expiration() {
-                receivers.push((*pos.digest(), batch_store.get_batch(pos)));
+                receivers.push((*pos.digest(), batch_reader.get_batch(pos)));
             } else {
                 debug!("QSE: skipped expired pos {}", pos.digest());
             }
@@ -59,11 +55,9 @@ impl PayloadManager {
     pub async fn notify_commit(&self, block_timestamp: u64, payloads: Vec<Payload>) {
         match self {
             PayloadManager::DirectMempool => {},
-            PayloadManager::InQuorumStore(batch_store, coordinator_tx) => {
+            PayloadManager::InQuorumStore(batch_reader, coordinator_tx) => {
                 // TODO: move this to somewhere in quorum store, so this can be a batch reader
-                batch_store
-                    .update_certified_timestamp(block_timestamp)
-                    .await;
+                batch_reader.update_certified_timestamp(block_timestamp);
 
                 let batches: Vec<_> = payloads
                     .into_iter()
@@ -98,13 +92,13 @@ impl PayloadManager {
     pub fn prefetch_payload_data(&self, payload: &Payload, timestamp: u64) {
         match self {
             PayloadManager::DirectMempool => {},
-            PayloadManager::InQuorumStore(batch_store, _) => match payload {
+            PayloadManager::InQuorumStore(batch_reader, _) => match payload {
                 Payload::InQuorumStore(proof_with_status) => {
                     if proof_with_status.status.lock().is_none() {
                         let receivers = PayloadManager::request_transactions(
                             proof_with_status.proofs.clone(),
                             timestamp,
-                            batch_store,
+                            batch_reader.clone(),
                         );
                         proof_with_status
                             .status
@@ -130,7 +124,7 @@ impl PayloadManager {
         match (self, payload) {
             (PayloadManager::DirectMempool, Payload::DirectMempool(txns)) => Ok(txns.clone()),
             (
-                PayloadManager::InQuorumStore(batch_store, _),
+                PayloadManager::InQuorumStore(batch_reader, _),
                 Payload::InQuorumStore(proof_with_data),
             ) => {
                 let status = proof_with_data.status.lock().take();
@@ -161,7 +155,7 @@ impl PayloadManager {
                                     let new_receivers = PayloadManager::request_transactions(
                                         proof_with_data.proofs.clone(),
                                         block.timestamp_usecs(),
-                                        batch_store,
+                                        batch_reader.clone(),
                                     );
                                     // Could not get all data so requested again
                                     proof_with_data
@@ -177,7 +171,7 @@ impl PayloadManager {
                                     let new_receivers = PayloadManager::request_transactions(
                                         proof_with_data.proofs.clone(),
                                         block.timestamp_usecs(),
-                                        batch_store,
+                                        batch_reader.clone(),
                                     );
                                     // Could not get all data so requested again
                                     proof_with_data
