@@ -20,7 +20,9 @@ use move_binary_format::{
 };
 use move_bytecode_verifier::{self, cyclic_dependencies, dependencies};
 use move_core_types::{
-    identifier::{IdentStr, Identifier},
+    account_address::AccountAddress,
+    ident_str,
+    identifier::IdentStr,
     language_storage::{ModuleId, StructTag, TypeTag},
     value::{IdentifierMappingKind, LayoutTag, MoveFieldLayout, MoveStructLayout, MoveTypeLayout},
     vm_status::StatusCode,
@@ -1456,7 +1458,8 @@ impl<'a> Resolver<'a> {
         &self,
         ty: &Type,
     ) -> PartialVMResult<(MoveTypeLayout, bool)> {
-        self.loader.type_to_type_layout_with_identifier_mappings(ty)
+        self.loader
+            .type_to_type_layout_with_identifier_mappings(ty, &self.module_store)
     }
 
     pub(crate) fn type_to_fully_annotated_layout(
@@ -2039,8 +2042,11 @@ impl Loader {
         self.type_to_type_layout_impl(ty, module_store, &mut count, 1)
     }
 
-    pub(crate) fn type_to_type_layout(&self, ty: &Type, 
-        module_store: &ModuleAdapter) -> PartialVMResult<MoveTypeLayout> {
+    pub(crate) fn type_to_type_layout(
+        &self,
+        ty: &Type,
+        module_store: &ModuleAdapter,
+    ) -> PartialVMResult<MoveTypeLayout> {
         let mut count = 0;
         let (layout, _has_identifier_mappings) =
             self.type_to_type_layout_impl(ty, module_store, &mut count, 1)?;

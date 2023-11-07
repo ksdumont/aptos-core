@@ -20,9 +20,7 @@ use move_vm_types::{
     loaded_data::runtime_types::Type,
     values::{GlobalValue, Value},
 };
-use std::{
-    collections::{btree_map::BTreeMap, hash_map::HashMap},
-};
+use std::collections::btree_map::BTreeMap;
 
 pub struct AccountDataCache {
     // The bool flag in the `data_map` indicates whether the resource contains

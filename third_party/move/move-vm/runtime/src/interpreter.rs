@@ -1077,7 +1077,9 @@ fn check_depth_of_type_impl(
             check_depth_of_type_impl(resolver, ty, max_depth, check_depth!(1))?
         },
         Type::Struct { name, .. } => {
-            let formula = resolver.loader().calculate_depth_of_struct(name, resolver.module_store())?;
+            let formula = resolver
+                .loader()
+                .calculate_depth_of_struct(name, resolver.module_store())?;
             check_depth!(formula.solve(&[]))
         },
         // NB: substitution must be performed before calling this function
@@ -1090,7 +1092,9 @@ fn check_depth_of_type_impl(
                     check_depth_of_type_impl(resolver, ty, max_depth, check_depth!(0))
                 })
                 .collect::<PartialVMResult<Vec<_>>>()?;
-            let formula = resolver.loader().calculate_depth_of_struct(name, resolver.module_store())?;
+            let formula = resolver
+                .loader()
+                .calculate_depth_of_struct(name, resolver.module_store())?;
             check_depth!(formula.solve(&ty_arg_depths))
         },
         Type::TyParam(_) => {
