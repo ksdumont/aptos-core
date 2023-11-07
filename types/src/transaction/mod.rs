@@ -48,6 +48,7 @@ mod module;
 mod multisig;
 mod script;
 pub mod signature_verified_transaction;
+pub mod webauthn;
 
 use crate::{
     contract_event::TransactionEvent, executable::ModulePath, fee_statement::FeeStatement,
