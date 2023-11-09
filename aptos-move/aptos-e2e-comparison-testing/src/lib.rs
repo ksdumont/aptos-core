@@ -48,30 +48,38 @@ const APTOS_PACKAGES_DIR_NAMES: [&str; 5] = [
 const STATE_DATA: &str = "state_data";
 const WRITE_SET_DATA: &str = "write_set_data";
 const INDEX_FILE: &str = "version_index.txt";
+const ERR_LOG: &str = "err_log.txt";
 const ROCKS_INDEX_DB: &str = "rocks_txn_idx_db";
 pub const APTOS_COMMONS: &str = "aptos-commons";
 const MAX_TO_FLUSH: usize = 50000;
 
 struct IndexWriter {
     index_writer: BufWriter<File>,
+    err_logger: BufWriter<File>,
     version_vec: Vec<u64>,
     counter: usize,
 }
 
 impl IndexWriter {
     pub fn new(root: &Path) -> Self {
-        let index_path = root.to_path_buf().join(INDEX_FILE);
-        let index_file = if !index_path.exists() {
-            File::create(index_path).expect("Error encountered while creating file!")
-        } else {
-            OpenOptions::new()
-                .write(true)
-                .append(true)
-                .open(index_path)
-                .unwrap()
+        let create_file = |file_name: &str| -> File {
+            let path = root.to_path_buf().join(file_name);
+            let file = if !path.exists() {
+                File::create(path).expect("Error encountered while creating file!")
+            } else {
+                OpenOptions::new()
+                    .write(true)
+                    .append(true)
+                    .open(path)
+                    .unwrap()
+            };
+            file
         };
+        let index_file = create_file(INDEX_FILE);
+        let err_log = create_file(ERR_LOG);
         Self {
             index_writer: BufWriter::with_capacity(4096 * 1024 /* 4096KB */, index_file),
+            err_logger: BufWriter::with_capacity(4096 * 1024 /* 4096KB */, err_log),
             version_vec: vec![],
             counter: 0,
         }
@@ -97,6 +105,13 @@ impl IndexWriter {
         if self.counter > MAX_TO_FLUSH {
             self.flush_writer();
         }
+    }
+
+    pub fn write_err(&mut self, err_msg: &str) {
+        self.index_writer
+            .write_fmt(format_args!("{}\n", err_msg))
+            .unwrap();
+        self.err_logger.flush().unwrap();
     }
 
     pub fn flush_writer(&mut self) {

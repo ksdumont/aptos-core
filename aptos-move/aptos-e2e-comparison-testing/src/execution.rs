@@ -288,14 +288,6 @@ impl Execution {
                 // Load other modules
                 if package_info.is_compilable() {
                     load_packages_to_executor(&mut executor, package_info, compiled_package_cache);
-                    // let compiled_package = compiled_package_cache.get(package_info).unwrap();
-                    // let root_modules = compiled_package.all_modules();
-                    // for compiled_module in root_modules {
-                    //     if let CompiledUnitEnum::Module(module) = &compiled_module.unit {
-                    //         let module_blob = compiled_module.unit.serialize(None);
-                    //         executor.add_module(&module.module.self_id(), module_blob);
-                    //     }
-                    // }
                 }
                 let mut senders = vec![sender];
                 senders.extend(TransactionMetadata::new(signed_trans).secondary_signers);

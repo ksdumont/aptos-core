@@ -10,6 +10,7 @@ use aptos_framework::natives::code::PackageMetadata;
 use aptos_rest_client::Client;
 use aptos_state_view::TStateView;
 use aptos_types::{
+    state_store::{state_key::StateKey, state_value::StateValue},
     transaction::{
         signature_verified_transaction::SignatureVerifiedTransaction, Transaction,
         TransactionOutput, Version,
@@ -137,6 +138,26 @@ impl DataCollection {
         Some(package_info)
     }
 
+    fn dump_txn_index(
+        data_manager: &mut DataManager,
+        txn_index: TxnIndex,
+        data_state: &HashMap<StateKey, StateValue>,
+        epoch_result_res: Result<Vec<TransactionOutput>>,
+        dump_write_set: bool,
+    ) {
+        // dump TxnIndex
+        data_manager.dump_txn_index(txn_index.version, &txn_index);
+        // dump state data
+        data_manager.dump_state_data(txn_index.version, data_state);
+        // dump write set
+        if dump_write_set {
+            let output = epoch_result_res.unwrap();
+            assert_eq!(output.len(), 1);
+            let write_set = output[0].write_set();
+            data_manager.dump_write_set(txn_index.version, write_set);
+        }
+    }
+
     pub async fn dump_data(&self, begin: Version, limit: u64) -> Result<()> {
         println!("begin dumping data");
         let compilation_cache = Arc::new(Mutex::new(CompilationCache::default()));
@@ -153,14 +174,21 @@ impl DataCollection {
             } else {
                 begin + limit - cur_version
             };
-            let v = self
+            let res_txns = self
                 .debugger
                 .get_and_filter_committed_transactions(cur_version, batch, self.filter_condition)
-                .await
-                .unwrap_or_default();
-            if !v.is_empty() {
-                let mut handles = vec![];
-                for (version, txn, source_code_data) in v {
+                .await;
+            // if error happens when collecting txns, log the version range
+            if res_txns.is_err() {
+                index_writer
+                    .lock()
+                    .unwrap()
+                    .write_err(&format!("{}:{}", cur_version, batch));
+            }
+            let txns = res_txns.unwrap_or_default();
+            if !txns.is_empty() {
+                let mut txn_execution_ths = vec![];
+                for (version, txn, source_code_data) in txns {
                     println!("get txn at version:{}", version);
 
                     let compilation_cache = compilation_cache.clone();
@@ -172,7 +200,7 @@ impl DataCollection {
                     let state_view =
                         DebuggerStateView::new_with_data_reads(self.debugger.clone(), version);
 
-                    let handler = tokio::task::spawn_blocking(move || {
+                    let txn_execution_thread = tokio::task::spawn_blocking(move || {
                         let epoch_result_res =
                             Self::execute_transactions_at_version_with_state_view(
                                 vec![txn.clone()],
@@ -192,7 +220,7 @@ impl DataCollection {
                             package_info: PackageInfo::non_compilable_info(),
                         };
 
-                        // Handle source code
+                        // handle source code
                         if let Some((address, package_name, map)) = source_code_data {
                             let package_info_opt = Self::dump_and_check_src(
                                 version,
@@ -208,36 +236,21 @@ impl DataCollection {
                             version_idx.package_info = package_info_opt.unwrap();
                         }
 
-                        // Dump TxnIndex
-                        data_manager
-                            .lock()
-                            .unwrap()
-                            .dump_txn_index(version, &version_idx);
+                        // dump through data_manager
+                        Self::dump_txn_index(
+                            &mut data_manager.lock().unwrap(),
+                            version_idx,
+                            &state_view.data_read_stake_keys.unwrap().lock().unwrap(),
+                            epoch_result_res,
+                            dump_write_set,
+                        );
 
                         // Log version
                         index.lock().unwrap().add_version(version);
-
-                        // Dump state data
-                        let data_state = state_view.data_read_stake_keys.unwrap();
-                        data_manager
-                            .lock()
-                            .unwrap()
-                            .dump_state_data(version, &data_state.lock().unwrap());
-
-                        // Dump write set
-                        if dump_write_set {
-                            let output = epoch_result_res.unwrap();
-                            assert_eq!(output.len(), 1);
-                            let write_set = output[0].write_set();
-                            data_manager
-                                .lock()
-                                .unwrap()
-                                .dump_write_set(version, write_set);
-                        }
                     });
-                    handles.push(handler);
+                    txn_execution_ths.push(txn_execution_thread);
                 }
-                futures::future::join_all(handles).await;
+                futures::future::join_all(txn_execution_ths).await;
                 // Dump version
                 index_writer.lock().unwrap().dump_version();
             }
