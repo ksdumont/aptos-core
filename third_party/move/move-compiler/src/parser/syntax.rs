@@ -1280,8 +1280,8 @@ fn parse_for_loop(context: &mut Context) -> Result<(Exp, bool), Box<Diagnostic>>
         Exp_::Block((vec![], vec![update], None, Box::new(None))),
     );
     let flag_conditional = Exp_::IfElse(
-        Box::new(flag_exp.clone()),
         Box::new(update),
+        Box::new(flag_exp.clone()),
         Some(Box::new(assign_iter)),
     );
 
