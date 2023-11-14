@@ -1121,9 +1121,7 @@ fn parse_spec_while_loop(
     }
 }
 
-fn parse_spec_loop_invariant(
-    context: &mut Context
-) -> Result<SequenceItem, Box<Diagnostic>> {
+fn parse_spec_loop_invariant(context: &mut Context) -> Result<SequenceItem, Box<Diagnostic>> {
     // Parse a loop invariant. Also validate that only `invariant`
     // properties are contained in the spec block. This is
     // transformed into `while ({spec { .. }; cond) body`.
@@ -1143,7 +1141,10 @@ fn parse_spec_loop_invariant(
             },
         }
     }
-    Ok(sp(spec.loc, SequenceItem_::Seq(Box::new(sp(spec.loc, Exp_::Spec(spec))))))
+    Ok(sp(
+        spec.loc,
+        SequenceItem_::Seq(Box::new(sp(spec.loc, Exp_::Spec(spec)))),
+    ))
 }
 
 // if there is a block, only parse the block, not any subsequent tokens
@@ -1280,10 +1281,19 @@ fn parse_for_loop(context: &mut Context) -> Result<(Exp, bool), Box<Diagnostic>>
     // Construct the increment "iter = iter + 1"
     // Construct exp "iter + 1"
     let iter_seq = sp(for_loc, SequenceItem_::Declare(iter.clone(), None));
-    let iter_exp = sp(for_loc, Exp_::Block((vec![], vec![iter_seq], None, Box::new(None))));
-    let one_exp = sp(for_loc, Exp_::Value(sp(for_loc, Value_::Num(Symbol::from("1")))));
+    let iter_exp = sp(
+        for_loc,
+        Exp_::Block((vec![], vec![iter_seq], None, Box::new(None))),
+    );
+    let one_exp = sp(
+        for_loc,
+        Exp_::Value(sp(for_loc, Value_::Num(Symbol::from("1")))),
+    );
     let op_add = sp(for_loc, BinOp_::Add);
-    let updated_exp = sp(for_loc, Exp_::BinopExp(Box::new(iter_exp.clone()), op_add, Box::new(one_exp)));
+    let updated_exp = sp(
+        for_loc,
+        Exp_::BinopExp(Box::new(iter_exp.clone()), op_add, Box::new(one_exp)),
+    );
     let update = sp(
         for_loc,
         SequenceItem_::Bind(iter.clone(), None, Box::new(updated_exp)),
@@ -1320,7 +1330,10 @@ fn parse_for_loop(context: &mut Context) -> Result<(Exp, bool), Box<Diagnostic>>
     let condition = sp(iter.loc, e);
     let while_condition = match spec_seq {
         None => condition,
-        Some(spec) => sp(for_loc, Exp_::Block((vec![], vec![spec], None, Box::new(Some(condition))))),
+        Some(spec) => sp(
+            for_loc,
+            Exp_::Block((vec![], vec![spec], None, Box::new(Some(condition)))),
+        ),
     };
 
     // construct the body of the while loop
