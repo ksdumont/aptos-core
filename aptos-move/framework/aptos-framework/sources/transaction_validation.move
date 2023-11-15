@@ -9,6 +9,7 @@ module aptos_framework::transaction_validation {
     use aptos_framework::aptos_coin::AptosCoin;
     use aptos_framework::chain_id;
     use aptos_framework::coin;
+    use aptos_framework::multisig_account;
     use aptos_framework::system_addresses;
     use aptos_framework::timestamp;
     use aptos_framework::transaction_fee;
@@ -160,6 +161,31 @@ module aptos_framework::transaction_validation {
     ) {
         let gas_payer = signer::address_of(&sender);
         prologue_common(sender, gas_payer, txn_sequence_number, txn_public_key, txn_gas_price, txn_max_gas_units, txn_expiration_time, chain_id)
+    }
+
+    fun multisig_script_prologue(
+        sender: signer,
+        multisig_account: address,
+        txn_sequence_number: u64,
+        txn_public_key: vector<u8>,
+        txn_gas_price: u64,
+        txn_max_gas_units: u64,
+        txn_expiration_time: u64,
+        chain_id: u8,
+        _script_hash: vector<u8>,
+    ) {
+        let sender_addr = signer::address_of(&sender);
+        prologue_common(
+            sender,
+            multisig_account,
+            txn_sequence_number,
+            txn_public_key,
+            txn_gas_price,
+            txn_max_gas_units,
+            txn_expiration_time,
+            chain_id,
+        );
+        multisig_account::assert_multisig_account_owner(sender_addr, multisig_account);
     }
 
     fun multi_agent_script_prologue(

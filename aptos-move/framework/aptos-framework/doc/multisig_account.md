@@ -92,6 +92,7 @@ and implement the governance voting logic on top.
 -  [Function `reject_transaction`](#0x1_multisig_account_reject_transaction)
 -  [Function `vote_transanction`](#0x1_multisig_account_vote_transanction)
 -  [Function `execute_rejected_transaction`](#0x1_multisig_account_execute_rejected_transaction)
+-  [Function `assert_multisig_account_owner`](#0x1_multisig_account_assert_multisig_account_owner)
 -  [Function `validate_multisig_transaction`](#0x1_multisig_account_validate_multisig_transaction)
 -  [Function `successful_transaction_execution_cleanup`](#0x1_multisig_account_successful_transaction_execution_cleanup)
 -  [Function `failed_transaction_execution_cleanup`](#0x1_multisig_account_failed_transaction_execution_cleanup)
@@ -2312,6 +2313,36 @@ Remove the next transaction if it has sufficient owner rejections.
 
 </details>
 
+<a name="0x1_multisig_account_assert_multisig_account_owner"></a>
+
+## Function `assert_multisig_account_owner`
+
+Assert that the provided multisig account exists, and the caller is an owner of the multisig account.
+
+
+<pre><code><b>public</b> <b>fun</b> <a href="multisig_account.md#0x1_multisig_account_assert_multisig_account_owner">assert_multisig_account_owner</a>(owner: <b>address</b>, <a href="multisig_account.md#0x1_multisig_account">multisig_account</a>: <b>address</b>)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b> <b>fun</b> <a href="multisig_account.md#0x1_multisig_account_assert_multisig_account_owner">assert_multisig_account_owner</a>(owner: <b>address</b>, <a href="multisig_account.md#0x1_multisig_account">multisig_account</a>: <b>address</b>) <b>acquires</b> <a href="multisig_account.md#0x1_multisig_account_MultisigAccount">MultisigAccount</a> {
+    <a href="multisig_account.md#0x1_multisig_account_assert_multisig_account_exists">assert_multisig_account_exists</a>(<a href="multisig_account.md#0x1_multisig_account">multisig_account</a>);
+    <b>let</b> multisig_account_resource = <b>borrow_global_mut</b>&lt;<a href="multisig_account.md#0x1_multisig_account_MultisigAccount">MultisigAccount</a>&gt;(<a href="multisig_account.md#0x1_multisig_account">multisig_account</a>);
+    <b>assert</b>!(
+        <a href="../../aptos-stdlib/../move-stdlib/doc/vector.md#0x1_vector_contains">vector::contains</a>(&multisig_account_resource.owners, &owner),
+        <a href="../../aptos-stdlib/../move-stdlib/doc/error.md#0x1_error_permission_denied">error::permission_denied</a>(<a href="multisig_account.md#0x1_multisig_account_ENOT_OWNER">ENOT_OWNER</a>),
+    );
+}
+</code></pre>
+
+
+
+</details>
+
 <a name="0x1_multisig_account_validate_multisig_transaction"></a>
 
 ## Function `validate_multisig_transaction`
@@ -2333,9 +2364,8 @@ Transaction payload is optional if it's already stored on chain for the transact
 
 <pre><code><b>fun</b> <a href="multisig_account.md#0x1_multisig_account_validate_multisig_transaction">validate_multisig_transaction</a>(
     owner: &<a href="../../aptos-stdlib/../move-stdlib/doc/signer.md#0x1_signer">signer</a>, <a href="multisig_account.md#0x1_multisig_account">multisig_account</a>: <b>address</b>, payload: <a href="../../aptos-stdlib/../move-stdlib/doc/vector.md#0x1_vector">vector</a>&lt;u8&gt;) <b>acquires</b> <a href="multisig_account.md#0x1_multisig_account_MultisigAccount">MultisigAccount</a> {
-    <a href="multisig_account.md#0x1_multisig_account_assert_multisig_account_exists">assert_multisig_account_exists</a>(<a href="multisig_account.md#0x1_multisig_account">multisig_account</a>);
+    <a href="multisig_account.md#0x1_multisig_account_assert_multisig_account_owner">assert_multisig_account_owner</a>(address_of(owner), <a href="multisig_account.md#0x1_multisig_account">multisig_account</a>);
     <b>let</b> multisig_account_resource = <b>borrow_global</b>&lt;<a href="multisig_account.md#0x1_multisig_account_MultisigAccount">MultisigAccount</a>&gt;(<a href="multisig_account.md#0x1_multisig_account">multisig_account</a>);
-    <a href="multisig_account.md#0x1_multisig_account_assert_is_owner">assert_is_owner</a>(owner, multisig_account_resource);
     <b>let</b> sequence_number = multisig_account_resource.last_executed_sequence_number + 1;
     <b>assert</b>!(
         <a href="../../aptos-stdlib/doc/table.md#0x1_table_contains">table::contains</a>(&multisig_account_resource.transactions, sequence_number),

@@ -891,6 +891,16 @@ module aptos_framework::multisig_account {
         );
     }
 
+    /// Assert that the provided multisig account exists, and the caller is an owner of the multisig account.
+    public fun assert_multisig_account_owner(owner: address, multisig_account: address) acquires MultisigAccount {
+        assert_multisig_account_exists(multisig_account);
+        let multisig_account_resource = borrow_global_mut<MultisigAccount>(multisig_account);
+        assert!(
+            vector::contains(&multisig_account_resource.owners, &owner),
+            error::permission_denied(ENOT_OWNER),
+        );
+    }
+
     ////////////////////////// To be called by VM only ///////////////////////////////
 
     /// Called by the VM as part of transaction prologue, which is invoked during mempool transaction validation and as
@@ -899,9 +909,8 @@ module aptos_framework::multisig_account {
     /// Transaction payload is optional if it's already stored on chain for the transaction.
     fun validate_multisig_transaction(
         owner: &signer, multisig_account: address, payload: vector<u8>) acquires MultisigAccount {
-        assert_multisig_account_exists(multisig_account);
+        assert_multisig_account_owner(address_of(owner), multisig_account);
         let multisig_account_resource = borrow_global<MultisigAccount>(multisig_account);
-        assert_is_owner(owner, multisig_account_resource);
         let sequence_number = multisig_account_resource.last_executed_sequence_number + 1;
         assert!(
             table::contains(&multisig_account_resource.transactions, sequence_number),
