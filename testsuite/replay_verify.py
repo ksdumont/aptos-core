@@ -71,6 +71,22 @@ MAINNET_RANGES = [
 ]
 
 
+# retry the replay_verify_partition if it fails
+def retry_replay_verify_partition(func, *args, **kwargs) -> Tuple[int, int, bytes]:
+    res = (0, 0, b"")
+    for i in range(3):
+        (partition_number, code, msg) = func(*args, **kwargs)
+        if code == 0:
+            return (partition_number, code, msg)
+        elif code == 1:
+            print(f"[partition {partition_number}] retrying {i}th time")
+            res = (partition_number, code, msg)
+            continue
+        else:
+            return (partition_number, code, msg)
+    return res
+
+
 def replay_verify_partition(
     n: int,
     N: int,
@@ -208,9 +224,10 @@ def main(runner_no=None, runner_cnt=None, start_version=None, end_version=None):
 
     with Pool(N) as p:
         all_partitions = p.starmap(
-            replay_verify_partition,
+            retry_replay_verify_partition,
             [
                 (
+                    replay_verify_partition,
                     n,
                     N,
                     runner_start,
