@@ -366,10 +366,10 @@ impl RoundManager {
         new_round_event: NewRoundEvent,
     ) -> anyhow::Result<ProposalMsg> {
         // Proposal generator will ensure that at most one proposal is generated per round
-        let sync_info = self.block_store.sync_info();
-        let mut sender = self.network.clone();
+        // let sync_info = self.block_store.sync_info();
+        // let mut sender = self.network.clone();
         let callback = async move {
-            sender.broadcast_sync_info(sync_info).await;
+            // sender.broadcast_sync_info(sync_info).await;
         }
         .boxed();
 
