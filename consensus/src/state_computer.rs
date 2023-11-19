@@ -12,6 +12,7 @@ use crate::{
     state_replication::{StateComputer, StateComputerCommitCallBackType},
     transaction_deduper::TransactionDeduper,
     transaction_filter::TransactionFilter,
+    transaction_generator::TransactionGenerator,
     transaction_shuffler::TransactionShuffler,
     txn_notifier::TxnNotifier,
 };
@@ -151,14 +152,13 @@ impl StateComputer for ExecutionProxy {
             "Executing block",
         );
 
-        let payload_manager = self.payload_manager.lock().as_ref().unwrap().clone();
-        let txn_deduper = self.transaction_deduper.lock().as_ref().unwrap().clone();
-        let txn_shuffler = self.transaction_shuffler.lock().as_ref().unwrap().clone();
         let txn_notifier = self.txn_notifier.clone();
-        let txns = match payload_manager.get_transactions(block).await {
-            Ok(txns) => txns,
-            Err(err) => return Box::pin(async move { Err(err) }),
-        };
+        let transaction_generator = TransactionGenerator::new(
+            self.payload_manager.lock().as_ref().unwrap().clone(),
+            self.transaction_filter.clone(),
+            self.transaction_deduper.lock().as_ref().unwrap().clone(),
+            self.transaction_shuffler.lock().as_ref().unwrap().clone(),
+        );
 
         let timestamp = block.timestamp_usecs();
         let maybe_block_gas_limit = *self.maybe_block_gas_limit.lock();
@@ -169,10 +169,7 @@ impl StateComputer for ExecutionProxy {
                 block.clone(),
                 metadata,
                 parent_block_id,
-                txns,
-                self.transaction_filter.clone(),
-                txn_deduper,
-                txn_shuffler,
+                transaction_generator,
                 maybe_block_gas_limit,
             )
             .await;

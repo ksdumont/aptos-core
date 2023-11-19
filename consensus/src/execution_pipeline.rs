@@ -8,6 +8,7 @@ use crate::{
     state_computer::{PipelineExecutionResult, StateComputeResultFut},
     transaction_deduper::TransactionDeduper,
     transaction_filter::TransactionFilter,
+    transaction_generator::TransactionGenerator,
     transaction_shuffler::TransactionShuffler,
 };
 use aptos_consensus_types::block::Block;
@@ -81,10 +82,7 @@ impl ExecutionPipeline {
         block: Block,
         metadata: BlockMetadata,
         parent_block_id: HashValue,
-        txns_to_execute: Vec<SignedTransaction>,
-        txn_filter: Arc<TransactionFilter>,
-        txn_deduper: Arc<dyn TransactionDeduper>,
-        txn_shuffler: Arc<dyn TransactionShuffler>,
+        txn_generator: TransactionGenerator,
         maybe_block_gas_limit: Option<u64>,
     ) -> StateComputeResultFut {
         let (result_tx, result_rx) = oneshot::channel();
@@ -93,12 +91,9 @@ impl ExecutionPipeline {
             .send(PrepareBlockCommand {
                 block,
                 metadata,
-                txns_to_execute,
                 maybe_block_gas_limit,
                 parent_block_id,
-                txn_filter,
-                txn_shuffler,
-                txn_deduper,
+                txn_generator,
                 result_tx,
             })
             .expect("Failed to send block to execution pipeline.");
@@ -122,33 +117,32 @@ impl ExecutionPipeline {
         while let Some(PrepareBlockCommand {
             block,
             metadata,
-            txns_to_execute,
             maybe_block_gas_limit,
             parent_block_id,
-            txn_filter,
-            txn_shuffler,
-            txn_deduper,
+            txn_generator,
             result_tx,
         }) = prepare_block_rx.recv().await
         {
             debug!("prepare_block received block {}.", block.id());
-
-            let execute_block_tx = execute_block_tx.clone();
-            let block_id = block.id();
-            let timestamp = block.timestamp_usecs();
-            let (input_txns, sig_verified_txns) = monitor!(
-                "prepare_block_1",
-                tokio::task::spawn_blocking(move || {
-                    let input_txns = Self::get_shuffled_txns_to_execute(
-                        block_id,
-                        timestamp,
-                        txns_to_execute,
-                        txn_filter,
-                        txn_shuffler,
-                        txn_deduper,
+            let input_txns = txn_generator.generate_input_transactions(&block).await;
+            if let Err(e) = input_txns {
+                result_tx.send(Err(e)).unwrap_or_else(|err| {
+                    error!(
+                        block_id = block.id(),
+                        "Failed to send back execution result for block {}: {:?}.",
+                        block.id(),
+                        err,
                     );
+                });
+                continue;
+            }
+            let execute_block_tx = execute_block_tx.clone();
+            let input_txns = input_txns.unwrap();
+            monitor!(
+                "prepare_block",
+                tokio::task::spawn_blocking(move || {
                     let txns_to_execute = Block::transactions_to_execute_for_metadata(
-                        block_id,
+                        block.id(),
                         input_txns.clone(),
                         metadata,
                         maybe_block_gas_limit,
@@ -162,21 +156,19 @@ impl ExecutionPipeline {
                                 .map(|t| t.into())
                                 .collect::<Vec<_>>()
                         });
-                    (input_txns, sig_verified_txns)
+                    execute_block_tx
+                        .send(ExecuteBlockCommand {
+                            input_txns,
+                            block: (block.id(), sig_verified_txns).into(),
+                            parent_block_id,
+                            maybe_block_gas_limit,
+                            result_tx,
+                        })
+                        .expect("Failed to send block to execution pipeline.");
                 })
                 .await
             )
             .expect("Failed to spawn_blocking.");
-
-            execute_block_tx
-                .send(ExecuteBlockCommand {
-                    input_txns,
-                    block: (block.id(), sig_verified_txns).into(),
-                    parent_block_id,
-                    maybe_block_gas_limit,
-                    result_tx,
-                })
-                .expect("Failed to send block to execution pipeline.");
         }
     }
 
@@ -270,13 +262,10 @@ impl ExecutionPipeline {
 struct PrepareBlockCommand {
     block: Block,
     metadata: BlockMetadata,
-    txns_to_execute: Vec<SignedTransaction>,
     maybe_block_gas_limit: Option<u64>,
     // The parent block id.
     parent_block_id: HashValue,
-    txn_filter: Arc<TransactionFilter>,
-    txn_shuffler: Arc<dyn TransactionShuffler>,
-    txn_deduper: Arc<dyn TransactionDeduper>,
+    txn_generator: TransactionGenerator,
     result_tx: oneshot::Sender<ExecutorResult<PipelineExecutionResult>>,
 }
 
