@@ -1228,11 +1228,12 @@ fn parse_for_loop(context: &mut Context) -> Result<(Exp, bool), Box<Diagnostic>>
     context.tokens.advance()?;
 
     consume_token(context.tokens, Tok::LParen)?;
-    let iter = parse_exp(context)?;
-    consume_identifier(context.tokens, "in")?;
+    let iter = parse_var(context)?;
+
+    consume_token(context.tokens, Tok::Semicolon)?;
 
     let lb = parse_exp(context)?;
-    consume_token(context.tokens, Tok::PeriodPeriod)?;
+    consume_token(context.tokens, Tok::Semicolon)?;
     let ub = parse_exp(context)?;
 
     let spec_seq = if context.tokens.peek() == Tok::Spec {
@@ -1260,12 +1261,17 @@ fn parse_for_loop(context: &mut Context) -> Result<(Exp, bool), Box<Diagnostic>>
     // }
     let for_loc = make_loc(context.tokens.file_hash(), start_loc, end_loc);
 
-    // Create assignment "iter = lower_bound"
-    let iter_init = sp(iter.loc, Exp_::Assign(Box::new(iter.clone()), Box::new(lb)));
-    let iter_init = sp(for_loc, SequenceItem_::Seq(Box::new(iter_init)));
+    // Create assignment "let iter = lower_bound"
+    let iter_bind = sp(iter.loc(), vec![sp(iter.loc(), Bind_::Var(iter))]);
+    let iter_init = sp(
+        iter.loc(),
+        SequenceItem_::Bind(iter_bind, None, Box::new(lb)),
+    );
+    // HOW TO CONVERT VAR TO EXP?
+    let iter_exp = sp(iter.loc(), Exp_::Move(iter));
 
     // To create the declaration "let flag = false", first create the variable flag, and then assign it to false
-    let flag_symb = Symbol::from("$update_iter_flag");
+    let flag_symb = Symbol::from("update_iter_flag");
     let flag = sp(for_loc, vec![sp(
         for_loc,
         Bind_::Var(Var(sp(for_loc, flag_symb))),
@@ -1277,12 +1283,6 @@ fn parse_for_loop(context: &mut Context) -> Result<(Exp, bool), Box<Diagnostic>>
     );
 
     // Construct the increment "iter = iter + 1"
-    // Construct exp "iter + 1"
-    // let iter_seq = sp(for_loc, SequenceItem_::Declare(iter.clone(), None));
-    // let iter_exp = sp(
-    //     for_loc,
-    //     Exp_::Block((vec![], vec![iter_seq], None, Box::new(None))),
-    // );
     let one_exp = sp(
         for_loc,
         Exp_::Value(sp(for_loc, Value_::Num(Symbol::from("1")))),
@@ -1290,11 +1290,11 @@ fn parse_for_loop(context: &mut Context) -> Result<(Exp, bool), Box<Diagnostic>>
     let op_add = sp(for_loc, BinOp_::Add);
     let updated_exp = sp(
         for_loc,
-        Exp_::BinopExp(Box::new(iter.clone()), op_add, Box::new(one_exp)),
+        Exp_::BinopExp(Box::new(iter_exp.clone()), op_add, Box::new(one_exp)),
     );
     let update = sp(
         for_loc,
-        Exp_::Assign(Box::new(iter.clone()), Box::new(updated_exp)),
+        Exp_::Assign(Box::new(iter_exp.clone()), Box::new(updated_exp)),
     );
 
     // Create the assignment "flag = true;"
@@ -1317,15 +1317,15 @@ fn parse_for_loop(context: &mut Context) -> Result<(Exp, bool), Box<Diagnostic>>
     //     Exp_::Block((vec![], vec![update], None, Box::new(None))),
     // );
     let flag_conditional = Exp_::IfElse(
-        Box::new(update),
         Box::new(flag_exp.clone()),
+        Box::new(update),
         Some(Box::new(assign_iter)),
     );
 
     // Create the conditional "iter < upper_bound"
-    let op_le = sp(iter.loc, BinOp_::Le);
-    let e = Exp_::BinopExp(Box::new(iter.clone()), op_le, Box::new(ub));
-    let condition = sp(iter.loc, e);
+    let op_le = sp(iter.loc(), BinOp_::Le);
+    let e = Exp_::BinopExp(Box::new(iter_exp.clone()), op_le, Box::new(ub));
+    let condition = sp(iter.loc(), e);
     let while_condition = match spec_seq {
         None => condition,
         Some(spec) => sp(
