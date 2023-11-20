@@ -6,10 +6,7 @@
 use crate::{
     monitor,
     state_computer::{PipelineExecutionResult, StateComputeResultFut},
-    transaction_deduper::TransactionDeduper,
-    transaction_filter::TransactionFilter,
     transaction_generator::TransactionGenerator,
-    transaction_shuffler::TransactionShuffler,
 };
 use aptos_consensus_types::block::Block;
 use aptos_crypto::HashValue;
@@ -64,19 +61,6 @@ impl ExecutionPipeline {
         Self { prepare_block_tx }
     }
 
-    fn get_shuffled_txns_to_execute(
-        block_id: HashValue,
-        timestamp: u64,
-        txns_to_execute: Vec<SignedTransaction>,
-        txn_filter: Arc<TransactionFilter>,
-        txn_shuffler: Arc<dyn TransactionShuffler>,
-        txn_deduper: Arc<dyn TransactionDeduper>,
-    ) -> Vec<SignedTransaction> {
-        let filtered_txns = txn_filter.filter(block_id, timestamp, txns_to_execute);
-        let deduped_txns = txn_deduper.dedup(filtered_txns);
-        txn_shuffler.shuffle(deduped_txns)
-    }
-
     pub async fn queue(
         &self,
         block: Block,
@@ -110,65 +94,73 @@ impl ExecutionPipeline {
         })
     }
 
-    async fn prepare_block_stage(
-        mut prepare_block_rx: mpsc::UnboundedReceiver<PrepareBlockCommand>,
+    async fn prepare_block(
         execute_block_tx: mpsc::UnboundedSender<ExecuteBlockCommand>,
+        command: PrepareBlockCommand,
     ) {
-        while let Some(PrepareBlockCommand {
+        let PrepareBlockCommand {
             block,
             metadata,
             maybe_block_gas_limit,
             parent_block_id,
             txn_generator,
             result_tx,
-        }) = prepare_block_rx.recv().await
-        {
-            debug!("prepare_block received block {}.", block.id());
-            let input_txns = txn_generator.generate_input_transactions(&block).await;
-            if let Err(e) = input_txns {
-                result_tx.send(Err(e)).unwrap_or_else(|err| {
-                    error!(
-                        block_id = block.id(),
-                        "Failed to send back execution result for block {}: {:?}.",
-                        block.id(),
-                        err,
-                    );
+        } = command;
+
+        debug!("prepare_block received block {}.", block.id());
+        let input_txns = txn_generator.generate_input_transactions(&block).await;
+        if let Err(e) = input_txns {
+            result_tx.send(Err(e)).unwrap_or_else(|err| {
+                error!(
+                    block_id = block.id(),
+                    "Failed to send back execution result for block {}: {:?}.",
+                    block.id(),
+                    err,
+                );
+            });
+            return;
+        }
+        let execute_block_tx = execute_block_tx.clone();
+        let input_txns = input_txns.unwrap();
+        tokio::task::spawn_blocking(move || {
+            let txns_to_execute = Block::transactions_to_execute_for_metadata(
+                block.id(),
+                input_txns.clone(),
+                metadata,
+                maybe_block_gas_limit,
+            );
+            let sig_verified_txns: Vec<SignatureVerifiedTransaction> =
+                SIG_VERIFY_POOL.install(|| {
+                    let num_txns = txns_to_execute.len();
+                    txns_to_execute
+                        .into_par_iter()
+                        .with_min_len(optimal_min_len(num_txns, 32))
+                        .map(|t| t.into())
+                        .collect::<Vec<_>>()
                 });
-                continue;
-            }
-            let execute_block_tx = execute_block_tx.clone();
-            let input_txns = input_txns.unwrap();
+            execute_block_tx
+                .send(ExecuteBlockCommand {
+                    input_txns,
+                    block: (block.id(), sig_verified_txns).into(),
+                    parent_block_id,
+                    maybe_block_gas_limit,
+                    result_tx,
+                })
+                .expect("Failed to send block to execution pipeline.");
+        })
+        .await
+        .expect("Failed to spawn_blocking.");
+    }
+
+    async fn prepare_block_stage(
+        mut prepare_block_rx: mpsc::UnboundedReceiver<PrepareBlockCommand>,
+        execute_block_tx: mpsc::UnboundedSender<ExecuteBlockCommand>,
+    ) {
+        while let Some(command) = prepare_block_rx.recv().await {
             monitor!(
                 "prepare_block",
-                tokio::task::spawn_blocking(move || {
-                    let txns_to_execute = Block::transactions_to_execute_for_metadata(
-                        block.id(),
-                        input_txns.clone(),
-                        metadata,
-                        maybe_block_gas_limit,
-                    );
-                    let sig_verified_txns: Vec<SignatureVerifiedTransaction> = SIG_VERIFY_POOL
-                        .install(|| {
-                            let num_txns = txns_to_execute.len();
-                            txns_to_execute
-                                .into_par_iter()
-                                .with_min_len(optimal_min_len(num_txns, 32))
-                                .map(|t| t.into())
-                                .collect::<Vec<_>>()
-                        });
-                    execute_block_tx
-                        .send(ExecuteBlockCommand {
-                            input_txns,
-                            block: (block.id(), sig_verified_txns).into(),
-                            parent_block_id,
-                            maybe_block_gas_limit,
-                            result_tx,
-                        })
-                        .expect("Failed to send block to execution pipeline.");
-                })
-                .await
-            )
-            .expect("Failed to spawn_blocking.");
+                Self::prepare_block(execute_block_tx.clone(), command).await
+            );
         }
     }
 
