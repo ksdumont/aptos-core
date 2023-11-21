@@ -272,12 +272,18 @@ impl<'env> Generator<'env> {
 
     /// Finds the temporary index assigned to the local.
     fn find_local(&self, id: NodeId, sym: Symbol) -> TempIndex {
-        for i in (0..self.scopes.len()).rev() {
-            if let Some(idx) = self.scopes[i].get(&sym) {
+        for scope in self.scopes.iter().rev() {
+            if let Some(idx) = scope.get(&sym) {
                 return *idx;
             }
         }
-        self.internal_error(id, "local not defined");
+        self.internal_error(
+            id,
+            format!(
+                "local `{}` not defined",
+                sym.display(self.env().symbol_pool())
+            ),
+        );
         0
     }
 
