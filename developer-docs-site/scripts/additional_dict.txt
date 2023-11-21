@@ -664,3 +664,9 @@ yamls
 zkSNARK
 zksnark
 observability
+namespaces
+typedoc
+MoveVector
+MoveString
+MoveOption
+autocomplete
